@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            preset: dev
+          - os: ubuntu-latest
+            preset: release
+          - os: windows-latest
+            preset: dev
+          - os: windows-latest
+            preset: release
+          - os: macos-latest
+            preset: dev
+          - os: macos-latest
+            preset: release
+    runs-on: ${{ matrix.os }}
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build prerequisites
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y autoconf autoconf-archive automake libtool pkg-config
+
+      - name: Install macOS build prerequisites
+        if: runner.os == 'macOS'
+        run: brew install autoconf autoconf-archive automake libtool pkg-config
+
+      - name: Bootstrap vcpkg on Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
+          git -C "$VCPKG_ROOT" checkout 277978ad2eddc3b05ecf288dcd33071968cd2f79
+          "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
+
+      - name: Bootstrap vcpkg on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git "$env:VCPKG_ROOT"
+          git -C "$env:VCPKG_ROOT" checkout 277978ad2eddc3b05ecf288dcd33071968cd2f79
+          & "$env:VCPKG_ROOT/bootstrap-vcpkg.bat" -disableMetrics
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      - name: Test
+        run: ctest --preset ${{ matrix.preset }}
+
+      - name: Verify independent Python vectors
+        if: matrix.os == 'ubuntu-latest' && matrix.preset == 'dev'
+        run: |
+          python3 -m pip install -r tools/requirements.txt
+          python3 tools/verify_crypto_vectors.py

@@ -121,6 +121,7 @@ if(BUILD_TESTING)
     cpcp_enable_warnings(cpcp_native_file_tests)
 
     add_executable(cpcp_simulation_tests
+        tests/simulation/commit_protocol_test.cpp
         tests/simulation/simulated_filesystem_test.cpp
     )
     target_link_libraries(cpcp_simulation_tests PRIVATE
@@ -143,9 +144,11 @@ if(BUILD_TESTING)
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/cli_contract.cmake
     )
 
-    add_test(
-        NAME cli_probe_write
-        COMMAND $<TARGET_FILE:cpcp> repo probe ${CMAKE_CURRENT_BINARY_DIR}
-            --write-test --iterations 2 --size 65536 --json
-    )
+    if(NOT WIN32)
+        add_test(
+            NAME cli_probe_write
+            COMMAND $<TARGET_FILE:cpcp> repo probe ${CMAKE_CURRENT_BINARY_DIR}
+                --write-test --iterations 2 --size 65536 --json
+        )
+    endif()
 endif()

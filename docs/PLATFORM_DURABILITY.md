@@ -62,6 +62,16 @@ Twenty write-test iterations with a 1,048,576-byte payload produced these aggreg
 
 These measurements describe this run only. They are not performance targets and do not establish hardware durability.
 
+Additional five-iteration Release probes compared candidate chunk-sized payloads. Values below are aggregate nanoseconds for all five iterations:
+
+| Payload | Write | Flush | Read-back | Publish | Directory sync |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 4 MiB | 23,124,701 | 64,511,716 | 33,487,703 | 672,438 | 13,302,138 |
+| 8 MiB | 34,999,383 | 85,778,771 | 46,594,539 | 517,227 | 12,203,655 |
+| 16 MiB | 71,966,779 | 133,484,678 | 96,436,258 | 427,436 | 12,417,798 |
+
+This small virtualized-disk sample is insufficient to choose a production chunk size. Physical source and repository devices, small files, memory pressure, and CDC trade-offs remain M1b benchmark inputs.
+
 ## 4. Platform matrix
 
 | Platform and filesystem | File flush | No-replace publication | Directory sync | Forced crash | Status |
@@ -73,7 +83,19 @@ These measurements describe this run only. They are not performance targets and 
 | Windows NTFS | Code path only | Code path only | Unsupported | Not run | Not suitable for strict repository mutation yet |
 | Network filesystems | Not run | Not run | Not run | Not run | Unsupported until independently verified |
 
-## 5. Conformance requirements before format freeze
+## 6. Windows safe restore traversal evaluation
+
+String normalization alone is not a sufficient traversal defense. Windows restore must consider junctions and reparse points, directory replacement races, case collisions, 8.3 aliases, trailing spaces or dots, reserved device names, alternate data stream separators, and `\\?\` or `\\.\` path namespaces.
+
+Three implementation approaches were evaluated:
+
+- Repeated `CreateFileW` path checks are portable but leave time-of-check/time-of-use gaps unless each component is opened with `FILE_FLAG_OPEN_REPARSE_POINT`, its attributes and identity are verified, and parent directories are pinned against replacement. Public Win32 APIs do not provide a general parent-handle-relative create equivalent to POSIX `openat`.
+- Component-wise directory handles with reparse-point inspection use documented APIs but still require adversarial tests for parent replacement and sharing semantics. This is the first M1 prototype path, not an assumed guarantee.
+- `NtCreateFile` with `RootDirectory` provides the desired handle-relative model but relies on native API contracts. It may be adopted only behind `platform::SafeDirectory`, with a documented Windows version matrix, dynamic API availability checks, and adversarial conformance tests.
+
+Until one approach passes those tests, cpcp must not claim strong hostile-destination traversal protection on Windows. A conservative restore into a newly created destination with no concurrent untrusted writers is an acceptable explicitly documented fallback; silently following a reparse point is not.
+
+## 7. Conformance requirements before format freeze
 
 - Run native tests on every declared filesystem and record OS, kernel, mount options, and storage class.
 - Exercise failure after each write, flush, publication, and directory-sync step.

@@ -64,7 +64,13 @@ TEST_CASE("native no-replace publication preserves an existing destination") {
     REQUIRE(writer.flush());
     REQUIRE(writer.close());
     REQUIRE(cpcp::platform::publish_no_replace(temporary, final));
-    REQUIRE(cpcp::platform::sync_directory(directory.path()));
+    const auto directory_sync = cpcp::platform::sync_directory(directory.path());
+#ifdef _WIN32
+    REQUIRE_FALSE(directory_sync);
+    REQUIRE(directory_sync.error().code == cpcp::domain::ErrorCode::unsupported);
+#else
+    REQUIRE(directory_sync);
+#endif
 
     auto second = BinaryFile::create_new(temporary).value();
     REQUIRE(second.close());

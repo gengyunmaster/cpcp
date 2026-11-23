@@ -16,6 +16,8 @@
 #ifdef __linux__
 #include <linux/fs.h>
 #include <sys/syscall.h>
+#elif defined(__APPLE__)
+#include <stdio.h>
 #endif
 #endif
 
@@ -251,7 +253,11 @@ domain::Result<void> sync_directory(const std::filesystem::path& path) {
         "directory synchronization is not yet implemented on Windows",
     });
 #else
-    const int directory = open(path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    int flags = O_RDONLY | O_CLOEXEC;
+#ifdef O_DIRECTORY
+    flags |= O_DIRECTORY;
+#endif
+    const int directory = open(path.c_str(), flags);
     if (directory < 0) {
         return std::unexpected(Error{ErrorCode::permanent_io, native_error(errno)});
     }

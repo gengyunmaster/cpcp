@@ -64,7 +64,7 @@ jobs:
 
       - name: Configure
         if: matrix.preset == 'dev' && matrix.os == 'ubuntu-latest'
-        run: cmake --preset dev -DCPCP_ENABLE_REFERENCE_TESTS=ON -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
+        run: cmake --preset dev -DCPCP_ENABLE_REFERENCE_TESTS=ON -DCPCP_ENABLE_LARGE_FILE_TESTS=ON -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
 
       - name: Configure
         if: matrix.preset != 'dev' || matrix.os != 'ubuntu-latest'

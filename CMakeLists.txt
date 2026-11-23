@@ -300,6 +300,19 @@ if(BUILD_TESTING)
         catch_discover_tests(cpcp_stress_tests)
     endif()
 
+    option(CPCP_ENABLE_LARGE_FILE_TESTS "Enable files larger than 4 GiB" OFF)
+    if(CPCP_ENABLE_LARGE_FILE_TESTS)
+        add_executable(cpcp_large_file_tests
+            tests/stress/large_file_test.cpp
+        )
+        target_link_libraries(cpcp_large_file_tests PRIVATE
+            cpcp_application
+            Catch2::Catch2WithMain
+        )
+        cpcp_enable_warnings(cpcp_large_file_tests)
+        catch_discover_tests(cpcp_large_file_tests)
+    endif()
+
     option(CPCP_ENABLE_REFERENCE_TESTS "Enable independent Python recoverer tests" OFF)
     option(CPCP_ENABLE_STRESS_TESTS "Enable large synthetic manifest stress tests" OFF)
     set(CPCP_PYTHONPATH "" CACHE STRING "Optional PyNaCl module path for reference tests")

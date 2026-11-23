@@ -142,7 +142,7 @@ cmake --build --preset dev
 ctest --preset dev -R multi-gigabyte
 ```
 
-The stress option is disabled in routine CI because of its I/O cost.
+The manifest stress option is disabled in routine CI because of its I/O cost. A separate `CPCP_ENABLE_LARGE_FILE_TESTS` option enables a real sparse file larger than 4 GiB with 64 MiB chunks, backup, deep verification, and restoration. It runs in the Ubuntu development CI job only and can be enabled locally with `cmake --preset dev -DCPCP_ENABLE_LARGE_FILE_TESTS=ON`.
 
 ## License
 

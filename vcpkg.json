@@ -1,0 +1,13 @@
+{
+  "name": "cpcp",
+  "version-string": "0.1.0",
+  "description": "Encrypted content-addressed backup CLI",
+  "license": "MIT",
+  "builtin-baseline": "277978ad2eddc3b05ecf288dcd33071968cd2f79",
+  "dependencies": [
+    "catch2",
+    "cli11",
+    "libsodium",
+    "nlohmann-json"
+  ]
+}

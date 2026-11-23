@@ -1,0 +1,7 @@
+.tools/
+.deps/
+build/
+out/
+vcpkg_installed/
+__pycache__/
+*.pyc

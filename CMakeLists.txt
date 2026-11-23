@@ -6,6 +6,7 @@ include(CTest)
 
 find_package(CLI11 CONFIG REQUIRED)
 find_package(Catch2 3 CONFIG REQUIRED)
+find_package(unofficial-sodium CONFIG REQUIRED)
 
 function(cpcp_enable_warnings target)
     if(MSVC)
@@ -26,6 +27,16 @@ add_library(cpcp_domain INTERFACE)
 target_include_directories(cpcp_domain INTERFACE src)
 target_compile_features(cpcp_domain INTERFACE cxx_std_23)
 
+add_library(cpcp_crypto STATIC
+    src/crypto/content_id.cpp
+    src/crypto/keys.cpp
+)
+target_link_libraries(cpcp_crypto PUBLIC
+    cpcp_domain
+    unofficial-sodium::sodium
+)
+cpcp_enable_warnings(cpcp_crypto)
+
 add_library(cpcp_simulation STATIC
     src/storage/simulated_filesystem.cpp
 )
@@ -45,10 +56,11 @@ cpcp_enable_warnings(cpcp)
 
 if(BUILD_TESTING)
     add_executable(cpcp_unit_tests
+        tests/unit/content_id_test.cpp
         tests/unit/result_test.cpp
     )
     target_link_libraries(cpcp_unit_tests PRIVATE
-        cpcp_domain
+        cpcp_crypto
         Catch2::Catch2WithMain
     )
     cpcp_enable_warnings(cpcp_unit_tests)

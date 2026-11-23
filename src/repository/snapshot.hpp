@@ -148,7 +148,11 @@ public:
     domain::Result<void> append_file_end(const FileEnd& end);
     domain::Result<void> append_policy_skip(const PolicySkip& skip);
     domain::Result<void> append_failure(const FailureInfo& failure);
-    domain::Result<SnapshotSummary> finish(SnapshotStats stats, std::string status = "complete");
+    domain::Result<SnapshotSummary> finish(
+        SnapshotStats stats,
+        std::string status = "complete",
+        bool interrupt_after_main_for_testing = false
+    );
     domain::Result<void> abort();
 
 private:

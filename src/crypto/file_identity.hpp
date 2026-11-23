@@ -17,8 +17,8 @@ public:
 
     FileIdentityBuilder(const FileIdentityBuilder&) = delete;
     FileIdentityBuilder& operator=(const FileIdentityBuilder&) = delete;
-    FileIdentityBuilder(FileIdentityBuilder&&) = delete;
-    FileIdentityBuilder& operator=(FileIdentityBuilder&&) = delete;
+    FileIdentityBuilder(FileIdentityBuilder&&) noexcept = default;
+    FileIdentityBuilder& operator=(FileIdentityBuilder&&) noexcept = default;
 
     domain::Result<void> initialize(
         const SecureKey& key,

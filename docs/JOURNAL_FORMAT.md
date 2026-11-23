@@ -1,6 +1,6 @@
 # cpcp Recovery Journal v1
 
-> Status: Implemented journal primitive; session integration is subsequent feature work
+> Status: Implemented journal v1 and resumable backup sessions
 
 Journal v1 is an independently versioned, append-only recovery hint. It is not snapshot or verification evidence. Source paths, source identities, chunk descriptors, and session state appear only inside authenticated encrypted records.
 
@@ -83,4 +83,16 @@ A journal record is never accepted as proof of current source or repository heal
 
 ## 4. Validation
 
-Tests cover chained append/replay, checkpoint recovery, ciphertext confidentiality for source paths, torn tails, replacement of an unauthenticated final record, rejection of corruption before the final record, wrong session contexts, and native read/write truncation. Full backup resume, root remapping, idempotent publication, status, and discard tests belong to the session integration milestone.
+Tests cover chained append/replay, checkpoint recovery, ciphertext confidentiality for source paths, torn tails, replacement of an unauthenticated final record, rejection of corruption before the final record, wrong session contexts, and native read/write truncation.
+
+## 5. Session payloads and resume invariants
+
+The session record reserves the snapshot UUID, generation, lineage, session UUID, storage epoch, root UUIDs, selection policy, and optional parent UUID. A resumed session authenticates this reservation before allocating or publishing anything. A conflicting active parent or a later generation blocks resume rather than renumbering implicitly.
+
+A file-begin record carries the root-relative path, file sequence, and opened-handle source identity. Chunk records carry a bounded `cpcp.chunk-batch.v1` value and new/deduplicated counters. A file-complete record carries the authenticated file header, source identity, descriptor-spool UUID, and counters. Descriptor spools use the existing encrypted `CPSP` format under `sessions/`.
+
+Resume uses disk-backed keyed path indexes for completed and currently observed paths. A completed file is skipped only when its size, normalized modification time, mode, device, and file identity still match. A partial file is rebuilt from journaled descriptor groups and resumed at its chunk boundary after every descriptor obtains current or policy-approved repository evidence. Missing objects require a source reread through `--restart-files`; journal data alone cannot recreate them.
+
+`--restart-files` and every root remap are explicit journal transitions. They invalidate earlier file completions for the affected roots without deleting published chunks. Remapping uses a root UUID and a caller-supplied canonical directory, never a similar directory name. A final reverse pass ensures that every required journaled file and directory was observed during the current source scan.
+
+Main snapshot and summary publication are idempotent. An existing main object is fully authenticated and checked for context, roots, selection policy, and final statistics before reuse. An existing summary must match the session and main digest exactly. Session completion is journaled only after summary publication; journal and owned spool files are removed afterward. Discard authenticates the session under maintenance locks and removes only session-owned files.

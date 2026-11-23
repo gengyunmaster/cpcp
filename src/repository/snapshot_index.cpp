@@ -20,7 +20,7 @@ using domain::ErrorCode;
 
 namespace {
 
-constexpr std::size_t record_size = 89;
+constexpr std::size_t record_size = 105;
 constexpr std::size_t run_record_limit = 1024;
 constexpr std::size_t open_run_limit = 32;
 
@@ -134,6 +134,8 @@ Bytes encode_record(
     domain::append_le(record, std::bit_cast<std::uint64_t>(metadata.mtime_seconds), 8);
     domain::append_le(record, metadata.mtime_nanoseconds, 4);
     domain::append_le(record, metadata.mode, 4);
+    domain::append_le(record, metadata.device, 8);
+    domain::append_le(record, metadata.inode, 8);
     record.insert(record.end(), metadata.file_id.begin(), metadata.file_id.end());
     return record;
 }
@@ -151,7 +153,9 @@ SnapshotPathMetadata decode_metadata(std::span<const std::byte, record_size> rec
     metadata.mode = static_cast<std::uint32_t>(
         domain::read_le(record.subspan(53, 4), 4).value()
     );
-    std::ranges::copy_n(record.begin() + 57, 32, metadata.file_id.begin());
+    metadata.device = domain::read_le(record.subspan(57, 8), 8).value();
+    metadata.inode = domain::read_le(record.subspan(65, 8), 8).value();
+    std::ranges::copy_n(record.begin() + 73, 32, metadata.file_id.begin());
     return metadata;
 }
 
@@ -328,7 +332,10 @@ domain::Result<void> SnapshotPathIndex::merge(
         const auto item = pending.top();
         pending.pop();
         if (previous && same_key(*previous, item.record)) {
-            return std::unexpected(Error{ErrorCode::integrity, "duplicate path identity in index"});
+            return std::unexpected(Error{
+                ErrorCode::integrity,
+                "duplicate path identity in index: " + domain::hex_encode(std::span(item.record).first<32>()),
+            });
         }
         const auto written = destination->write_all(item.record);
         if (!written) {

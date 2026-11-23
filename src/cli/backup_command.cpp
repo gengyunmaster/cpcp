@@ -44,6 +44,14 @@ nlohmann::json event_json(const application::CheckEvent& event) {
     };
 }
 
+domain::Result<domain::Uuid> parse_session_id(const std::string& text) {
+    const auto session = domain::hex_decode<16>(text);
+    if (!session) {
+        return std::unexpected(domain::Error{domain::ErrorCode::usage, "session ID must be 32 lowercase hexadecimal characters"});
+    }
+    return *session;
+}
+
 }
 
 int run_backup_add_command(
@@ -218,6 +226,121 @@ int run_backup_check_command(
         });
     }
     return report->differences == 0 ? 0 : 3;
+}
+
+int run_backup_status_command(const SessionCommandOptions& options) {
+    auto password = application::read_password(options.config.password_file, !options.config.json);
+    if (!password) {
+        return report_error(password.error());
+    }
+    const auto sessions = application::backup_status(options.repository, *password);
+    if (!sessions) {
+        return report_error(sessions.error());
+    }
+    if (options.config.json) {
+        auto documents = nlohmann::json::array();
+        for (const auto& session : *sessions) {
+            auto roots = nlohmann::json::array();
+            for (const auto& root : session.roots) {
+                roots.push_back({
+                    {"index", root.index},
+                    {"uuid", domain::hex_encode(root.uuid)},
+                    {"label", root.label},
+                    {"path", root.path},
+                });
+            }
+            documents.push_back({
+                {"session", domain::hex_encode(session.session_uuid)},
+                {"snapshot", std::to_string(session.snapshot_generation)},
+                {"records", std::to_string(session.records)},
+                {"state", session.state},
+                {"torn_tail", session.torn_tail},
+                {"roots", roots},
+            });
+        }
+        std::cout << nlohmann::json{
+            {"schema", "cpcp.backup-status.v1"},
+            {"sessions", documents},
+        }.dump(2) << '\n';
+    } else {
+        for (const auto& session : *sessions) {
+            std::cout << domain::hex_encode(session.session_uuid) << "  snapshot "
+                      << session.snapshot_generation << "  " << session.state << "  "
+                      << session.records << " records\n";
+            for (const auto& root : session.roots) {
+                std::cout << "  root " << root.index << " " << domain::hex_encode(root.uuid)
+                          << " " << root.label << " " << root.path << '\n';
+            }
+        }
+    }
+    return 0;
+}
+
+int run_backup_resume_command(
+    const std::string& session,
+    const application::ResumeOptions& resume,
+    const SessionCommandOptions& options
+) {
+    const auto session_uuid = parse_session_id(session);
+    if (!session_uuid) {
+        return report_error(session_uuid.error());
+    }
+    auto password = application::read_password(options.config.password_file, !options.config.json);
+    if (!password) {
+        return report_error(password.error());
+    }
+    const auto report = application::backup_resume(options.repository, *password, *session_uuid, resume);
+    if (!report) {
+        return report_error(report.error());
+    }
+    if (options.config.json) {
+        std::cout << nlohmann::json{
+            {"schema", "cpcp.backup-resume.v1"},
+            {"session", session},
+            {"generation", std::to_string(report->snapshot.context.generation)},
+            {"snapshot_uuid", domain::hex_encode(report->snapshot.context.snapshot_uuid)},
+            {"status", report->snapshot.status},
+            {"resumed", report->resumed},
+            {"stats", {
+                {"files", std::to_string(report->snapshot.stats.files)},
+                {"new_chunks", std::to_string(report->snapshot.stats.new_chunks)},
+                {"deduplicated_chunks", std::to_string(report->snapshot.stats.deduplicated_chunks)},
+            }},
+        }.dump(2) << '\n';
+    } else {
+        std::cout << "Resumed session " << session << " and published snapshot "
+                  << report->snapshot.context.generation << " (" << report->snapshot.status << ")\n";
+    }
+    return report->snapshot.status == "partial" ? 3 : 0;
+}
+
+int run_backup_discard_command(
+    const std::string& session,
+    bool confirmed,
+    const SessionCommandOptions& options
+) {
+    const auto session_uuid = parse_session_id(session);
+    if (!session_uuid) {
+        return report_error(session_uuid.error());
+    }
+    auto password = application::read_password(options.config.password_file, !options.config.json);
+    if (!password) {
+        return report_error(password.error());
+    }
+    const auto discarded = application::backup_discard(options.repository, *password, *session_uuid, confirmed);
+    if (!discarded) {
+        return report_error(discarded.error());
+    }
+    if (options.config.json) {
+        std::cout << nlohmann::json{
+            {"schema", "cpcp.backup-discard.v1"},
+            {"session", session},
+            {"discarded", true},
+        }.dump(2) << '\n';
+    } else {
+        std::cout << "Discarded resumable state for session " << session << '\n';
+    }
+    return 0;
 }
 
 }

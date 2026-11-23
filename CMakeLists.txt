@@ -175,6 +175,7 @@ if(BUILD_TESTING)
         tests/integration/backup_service_test.cpp
         tests/integration/browse_service_test.cpp
         tests/integration/check_service_test.cpp
+        tests/integration/resume_service_test.cpp
     )
     target_link_libraries(cpcp_backup_tests PRIVATE
         cpcp_application

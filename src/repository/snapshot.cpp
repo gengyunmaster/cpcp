@@ -492,6 +492,11 @@ domain::Result<SnapshotWriter> SnapshotWriter::create(
     auto writer = std::make_unique<storage::SessionSpoolWriter>();
     const auto path = repository / "tmp"
         / (snapshot_basename(context.generation, context.snapshot_uuid) + ".part");
+    std::error_code temporary_error;
+    std::filesystem::remove(path, temporary_error);
+    if (temporary_error) {
+        return std::unexpected(Error{ErrorCode::permanent_io, temporary_error.message()});
+    }
     const auto created = writer->create(path, *key, context, crypto::StreamDomain::snapshot);
     if (!created) {
         return std::unexpected(created.error());
@@ -641,7 +646,11 @@ domain::Result<void> SnapshotWriter::append_failure(const FailureInfo& failure) 
     });
 }
 
-domain::Result<SnapshotSummary> SnapshotWriter::finish(SnapshotStats stats, std::string status) {
+domain::Result<SnapshotSummary> SnapshotWriter::finish(
+    SnapshotStats stats,
+    std::string status,
+    bool interrupt_after_main_for_testing
+) {
     if (finished_) {
         return std::unexpected(Error{ErrorCode::usage, "snapshot writer is already finished"});
     }
@@ -664,53 +673,128 @@ domain::Result<SnapshotSummary> SnapshotWriter::finish(SnapshotStats stats, std:
 
     const auto temporary = repository_ / "tmp"
         / (snapshot_basename(summary_.context.generation, summary_.context.snapshot_uuid) + ".part");
-    storage::SessionSpoolReader reader;
-    auto opened = reader.open(temporary, snapshot_key_, summary_.context, crypto::StreamDomain::snapshot);
-    if (!opened) {
-        return std::unexpected(opened.error());
-    }
-    while (true) {
-        auto record = reader.next();
-        if (!record) {
-            return std::unexpected(record.error());
+    const auto inspect_main = [&](const std::filesystem::path& path) -> domain::Result<void> {
+        storage::SessionSpoolReader reader;
+        const auto opened = reader.open(path, snapshot_key_, summary_.context, crypto::StreamDomain::snapshot);
+        if (!opened) {
+            return std::unexpected(opened.error());
         }
-        if (!record->has_value()) {
-            break;
+        std::size_t root_index = 0;
+        bool header_seen = false;
+        while (true) {
+            auto record = reader.next();
+            if (!record) {
+                return std::unexpected(record.error());
+            }
+            if (!record->has_value()) {
+                break;
+            }
+            if ((*record)->type == crypto::RecordType::root) {
+                const auto root = parse_root(**record);
+                if (!root || root_index >= summary_.roots.size()
+                    || root_json(*root) != root_json(summary_.roots[root_index])) {
+                    return std::unexpected(Error{ErrorCode::integrity, "snapshot root sequence mismatch"});
+                }
+                ++root_index;
+            } else if ((*record)->type == crypto::RecordType::snapshot_header) {
+                const auto header = parse_snapshot_header(**record);
+                if (!header || header_seen
+                    || header->selection_policy.unsupported != summary_.selection_policy.unsupported
+                    || header->selection_policy.one_file_system != summary_.selection_policy.one_file_system) {
+                    return std::unexpected(Error{ErrorCode::integrity, "snapshot header semantics mismatch"});
+                }
+                header_seen = true;
+                summary_.created_seconds = header->created_seconds;
+                summary_.created_nanoseconds = header->created_nanoseconds;
+                summary_.has_parent = header->has_parent;
+                summary_.parent_uuid = header->parent_uuid;
+                summary_.parent_summary_digest = header->parent_summary_digest;
+            } else if ((*record)->type == crypto::RecordType::final_summary) {
+                const auto final_stats = parse_final_stats(**record);
+                const auto final_status = parse_final_status(**record);
+                if (!final_stats || !final_status || stats_json(*final_stats) != stats_json(stats)
+                    || *final_status != summary_.status) {
+                    return std::unexpected(Error{ErrorCode::integrity, "snapshot final semantics mismatch"});
+                }
+            }
         }
-    }
-    auto digest = reader.ciphertext_digest();
-    if (!digest) {
-        return std::unexpected(digest.error());
-    }
-    summary_.main_ciphertext_digest = *digest;
-    summary_.main_stored_length = reader.stored_length();
+        if (!header_seen || root_index != summary_.roots.size()) {
+            return std::unexpected(Error{ErrorCode::integrity, "snapshot is missing required identity records"});
+        }
+        const auto digest = reader.ciphertext_digest();
+        if (!digest) {
+            return std::unexpected(digest.error());
+        }
+        summary_.main_ciphertext_digest = *digest;
+        summary_.main_stored_length = reader.stored_length();
+        return {};
+    };
 
     const auto main_final = snapshot_main_path(repository_, summary_);
-    auto published = platform::publish_no_replace(temporary, main_final);
-    if (!published) {
-        return std::unexpected(published.error());
-    }
-    auto synced = platform::sync_directory(repository_ / "snapshots");
-    if (!synced) {
-        return std::unexpected(synced.error());
+    if (std::filesystem::exists(main_final)) {
+        const auto inspected = inspect_main(main_final);
+        if (!inspected) {
+            return std::unexpected(inspected.error());
+        }
+        std::error_code error;
+        std::filesystem::remove(temporary, error);
+        if (error) {
+            return std::unexpected(Error{ErrorCode::permanent_io, error.message()});
+        }
+    } else {
+        const auto inspected = inspect_main(temporary);
+        if (!inspected) {
+            return std::unexpected(inspected.error());
+        }
+        const auto published = platform::publish_no_replace(temporary, main_final);
+        if (!published) {
+            return std::unexpected(published.error());
+        }
+        const auto synced = platform::sync_directory(repository_ / "snapshots");
+        if (!synced) {
+            return std::unexpected(synced.error());
+        }
     }
 
     const auto summary_final = snapshot_summary_path(repository_, summary_);
+    if (std::filesystem::exists(summary_final)) {
+        const auto existing = read_summary_file(summary_final, snapshot_key_);
+        if (!existing) {
+            return std::unexpected(existing.error());
+        }
+        if (summary_json(*existing) != summary_json(summary_)) {
+            return std::unexpected(Error{ErrorCode::integrity, "existing snapshot summary does not match the session"});
+        }
+        finished_ = true;
+        return *existing;
+    }
+    if (interrupt_after_main_for_testing) {
+        return std::unexpected(Error{
+            ErrorCode::cancellation,
+            "snapshot main published before summary; resume session " + domain::hex_encode(summary_.session_uuid),
+        });
+    }
+
     const auto summary_temp = repository_ / "tmp"
         / (snapshot_basename(summary_.context.generation, summary_.context.snapshot_uuid) + ".summary.part");
-    auto written = write_summary_file(summary_temp, snapshot_key_, summary_);
+    std::error_code summary_temporary_error;
+    std::filesystem::remove(summary_temp, summary_temporary_error);
+    if (summary_temporary_error) {
+        return std::unexpected(Error{ErrorCode::permanent_io, summary_temporary_error.message()});
+    }
+    const auto written = write_summary_file(summary_temp, snapshot_key_, summary_);
     if (!written) {
         return std::unexpected(written.error());
     }
-    auto verified = read_summary_file(summary_temp, snapshot_key_);
+    const auto verified = read_summary_file(summary_temp, snapshot_key_);
     if (!verified) {
         return std::unexpected(verified.error());
     }
-    published = platform::publish_no_replace(summary_temp, summary_final);
+    const auto published = platform::publish_no_replace(summary_temp, summary_final);
     if (!published) {
         return std::unexpected(published.error());
     }
-    synced = platform::sync_directory(repository_ / "snapshots");
+    const auto synced = platform::sync_directory(repository_ / "snapshots");
     if (!synced) {
         return std::unexpected(synced.error());
     }

@@ -130,6 +130,56 @@ int run(int argc, char** argv) {
         command_result = run_backup_check_command(check_selector, check_root, check_options);
     });
 
+    SessionCommandOptions session_options;
+    const auto add_session_options = [&](CLI::App* command) {
+        command->add_option("--repo", session_options.repository)->default_val(session_options.repository);
+        command->add_option("--password-file", session_options.config.password_file);
+        command->add_flag("--json", session_options.config.json);
+    };
+    auto* status = backup->add_subcommand("status", "List resumable backup sessions");
+    add_session_options(status);
+    status->callback([&] {
+        command_result = run_backup_status_command(session_options);
+    });
+
+    auto* resume = backup->add_subcommand("resume", "Resume an interrupted backup session");
+    std::string resume_session;
+    application::ResumeOptions resume_options;
+    std::vector<std::string> remap_roots;
+    resume->add_option("session", resume_session)->required();
+    resume->add_flag("--restart-files", resume_options.restart_files, "Reread source files instead of reusing file completions");
+    resume->add_flag("--revalidate-all", resume_options.revalidate_all, "Revalidate every referenced chunk");
+    resume->add_option("--remap-root", remap_roots, "Map <root-uuid>=<new-path>")->expected(-1);
+    add_session_options(resume);
+    resume->callback([&] {
+        for (const auto& mapping : remap_roots) {
+            const auto separator = mapping.find('=');
+            if (separator == std::string::npos || separator == 0 || separator + 1 == mapping.size()) {
+                command_result = report_error(domain::Error{
+                    domain::ErrorCode::usage,
+                    "--remap-root requires <root-uuid>=<new-path>",
+                });
+                return;
+            }
+            const auto root = mapping.substr(0, separator);
+            if (!resume_options.remap_roots.emplace(root, mapping.substr(separator + 1)).second) {
+                command_result = report_error(domain::Error{domain::ErrorCode::usage, "duplicate remapped root"});
+                return;
+            }
+        }
+        command_result = run_backup_resume_command(resume_session, resume_options, session_options);
+    });
+
+    auto* discard = backup->add_subcommand("discard", "Discard resumable session state");
+    std::string discard_session;
+    bool discard_yes = false;
+    discard->add_option("session", discard_session)->required();
+    discard->add_flag("--yes", discard_yes, "Confirm discarding session state");
+    add_session_options(discard);
+    discard->callback([&] {
+        command_result = run_backup_discard_command(discard_session, discard_yes, session_options);
+    });
+
     auto* snapshot = app.add_subcommand("snapshot", "Snapshot operations");
     snapshot->require_subcommand(1);
     InspectionCommandOptions inspection_options;

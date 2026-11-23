@@ -203,6 +203,29 @@ domain::Result<void> ChunkStore::validate(const ChunkMetadata& chunk) {
     return {};
 }
 
+domain::Result<ChunkMetadata> ChunkStore::reuse(const crypto::ChunkDescriptor& descriptor) {
+    ChunkMetadata chunk{
+        descriptor.chunk_id,
+        descriptor.plaintext_length,
+        descriptor.stored_length,
+        true,
+    };
+    const auto metadata = check_metadata(chunk);
+    if (!metadata) {
+        return std::unexpected(metadata.error());
+    }
+    const auto key = crypto::to_hex(chunk.id);
+    if (revalidate_all_ || !base_evidence_.contains(key)) {
+        const auto validated = validate(chunk);
+        if (!validated) {
+            return std::unexpected(validated.error());
+        }
+    } else {
+        checks_[key].validated = true;
+    }
+    return chunk;
+}
+
 domain::Result<crypto::Bytes> ChunkStore::get(const ChunkMetadata& chunk) {
     auto metadata = check_metadata(chunk);
     if (!metadata) {

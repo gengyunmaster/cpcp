@@ -29,6 +29,7 @@ public:
     );
 
     domain::Result<ChunkMetadata> put(std::span<const std::byte> plaintext);
+    domain::Result<ChunkMetadata> reuse(const crypto::ChunkDescriptor& descriptor);
     domain::Result<crypto::Bytes> get(const ChunkMetadata& chunk);
     domain::Result<void> inspect(const ChunkMetadata& chunk);
     domain::Result<void> validate(const ChunkMetadata& chunk);

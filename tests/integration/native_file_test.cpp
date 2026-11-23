@@ -51,6 +51,10 @@ TEST_CASE("native binary files write flush and read exact bytes") {
     REQUIRE(actual == expected);
     std::array<std::byte, 1> extra{};
     REQUIRE(reader.read_some(extra).value() == 0);
+    REQUIRE(reader.seek(2));
+    std::array<std::byte, 2> tail{};
+    REQUIRE(reader.read_exact(tail));
+    REQUIRE(tail == std::array<std::byte, 2>{std::byte{2}, std::byte{255}});
 }
 
 TEST_CASE("native no-replace publication preserves an existing destination") {

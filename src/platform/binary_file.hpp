@@ -32,6 +32,7 @@ public:
     domain::Result<void> write_all(std::span<const std::byte> bytes);
     domain::Result<std::size_t> read_some(std::span<std::byte> output);
     domain::Result<void> read_exact(std::span<std::byte> output);
+    domain::Result<void> seek(std::uint64_t offset);
     domain::Result<void> flush();
     domain::Result<void> close();
     domain::Result<FileMetadata> metadata() const;

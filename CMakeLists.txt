@@ -85,6 +85,7 @@ add_library(cpcp_repository STATIC
     src/repository/config.cpp
     src/repository/config_io.cpp
     src/repository/snapshot.cpp
+    src/repository/snapshot_index.cpp
     src/repository/snapshot_records.cpp
 )
 target_link_libraries(cpcp_repository PUBLIC
@@ -150,6 +151,7 @@ if(BUILD_TESTING)
         tests/unit/chunk_store_test.cpp
         tests/unit/config_test.cpp
         tests/unit/snapshot_test.cpp
+        tests/unit/snapshot_index_test.cpp
     )
     target_link_libraries(cpcp_storage_tests PRIVATE
         cpcp_application

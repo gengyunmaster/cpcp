@@ -223,6 +223,31 @@ domain::Result<void> BinaryFile::read_exact(std::span<std::byte> output) {
     return {};
 }
 
+domain::Result<void> BinaryFile::seek(std::uint64_t offset) {
+    if (offset > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+        return std::unexpected(Error{ErrorCode::permanent_io, "file offset is out of range"});
+    }
+#ifdef _WIN32
+    LARGE_INTEGER position{};
+    position.QuadPart = static_cast<LONGLONG>(offset);
+    if (!SetFilePointerEx(reinterpret_cast<HANDLE>(handle_), position, nullptr, FILE_BEGIN)) {
+        return std::unexpected(Error{ErrorCode::permanent_io, "SetFilePointerEx failed"});
+    }
+#else
+    if (offset > static_cast<std::uint64_t>(std::numeric_limits<off_t>::max())) {
+        return std::unexpected(Error{ErrorCode::permanent_io, "file offset is out of range"});
+    }
+    off_t positioned = 0;
+    do {
+        positioned = lseek(static_cast<int>(handle_), static_cast<off_t>(offset), SEEK_SET);
+    } while (positioned < 0 && errno == EINTR);
+    if (positioned < 0) {
+        return std::unexpected(Error{ErrorCode::permanent_io, native_error(errno)});
+    }
+#endif
+    return {};
+}
+
 domain::Result<void> BinaryFile::flush() {
 #ifdef _WIN32
     if (!FlushFileBuffers(reinterpret_cast<HANDLE>(handle_))) {

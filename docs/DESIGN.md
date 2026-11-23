@@ -713,7 +713,7 @@ Results use explicit statuses such as:
 
 Recursive comparison uses the union of source and snapshot entries so that added and deleted paths are both detected. By default, a source absolute path is mapped through the snapshot's original root paths. To validate a restored or relocated tree, `backup check <local-directory> --root index:<n>` treats that directory as the selected snapshot root; `--path <relative-path>` can narrow the comparison. This mapping is explicit and does not depend on the original absolute path still existing.
 
-Content checks use the same second-level file ID as backup and restore. A bounded disk-backed descriptor spool may be used for large files; no whole-file or whole-tree report DOM is required. Added, missing, type-changed, unreadable, unsupported, unknown, or policy-skipped entries produce exit code 3 when they are part of the requested comparison.
+Content checks use the same second-level file ID as backup and restore. A bounded disk-backed descriptor spool may be used for large files; no whole-file or whole-tree report DOM is required. Disposable path indexes use externally sorted fixed-size records keyed by HMAC over the root UUID and relative path; they contain comparison metadata but no plaintext paths. Added, missing, type-changed, unreadable, unsupported, unknown, or policy-skipped entries produce exit code 3 when they are part of the requested comparison.
 
 The human output and JSON report must state the selected snapshot, its complete or partial status, root mapping, and exact verification scope. A metadata match must never be displayed as proof of a safe or restorable backup.
 

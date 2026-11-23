@@ -18,6 +18,7 @@ int exit_code(domain::ErrorCode code) {
     case ErrorCode::retryable_io:
     case ErrorCode::permanent_io:
     case ErrorCode::unsupported:
+        return 1;
     case ErrorCode::source_changed:
         return 3;
     case ErrorCode::conflict:

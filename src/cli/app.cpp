@@ -2,10 +2,13 @@
 
 #include "cli/config_command.hpp"
 #include "cli/backup_command.hpp"
+#include "cli/inspection_command.hpp"
 #include "cli/probe_command.hpp"
+#include "cli/errors.hpp"
 
 #include <CLI/CLI.hpp>
 
+#include <charconv>
 #include <filesystem>
 #include <string>
 
@@ -91,6 +94,83 @@ int run(int argc, char** argv) {
             backup_roots,
             BackupCommandOptions{backup_repository, backup_options, config_options}
         );
+    });
+
+    auto* snapshot = app.add_subcommand("snapshot", "Snapshot operations");
+    snapshot->require_subcommand(1);
+    InspectionCommandOptions inspection_options;
+    inspection_options.config = config_options;
+    const auto add_inspection_options = [&](CLI::App* command) {
+        command->add_option("--repo", inspection_options.repository)->default_val(inspection_options.repository);
+        command->add_option("--password-file", inspection_options.config.password_file);
+        command->add_flag("--json", inspection_options.config.json);
+        command->add_flag("--repo-read-only", inspection_options.repo_read_only);
+    };
+
+    auto* list = snapshot->add_subcommand("list", "List snapshots");
+    add_inspection_options(list);
+    list->callback([&] {
+        command_result = run_snapshot_list_command(inspection_options);
+    });
+
+    auto* show = snapshot->add_subcommand("show", "Show a snapshot summary");
+    std::uint64_t show_generation = 0;
+    show->add_option("generation", show_generation)->required();
+    add_inspection_options(show);
+    show->callback([&] {
+        command_result = run_snapshot_show_command(inspection_options, show_generation);
+    });
+
+    auto* restore = snapshot->add_subcommand("restore", "Restore snapshot entries");
+    std::string restore_selector;
+    application::RestoreOptions restore_options;
+    std::string root_selector;
+    restore->add_option("snapshot", restore_selector)->required();
+    restore->add_option("--to", restore_options.destination)->required();
+    restore->add_option("--root", root_selector);
+    restore->add_option("--path", restore_options.path);
+    restore->add_flag("--strip-root", restore_options.strip_root);
+    restore->add_flag("--overwrite", restore_options.overwrite);
+    restore->add_flag("--yes", restore_options.yes);
+    restore->add_flag("--strict-metadata", restore_options.strict_metadata);
+    add_inspection_options(restore);
+    restore->callback([&] {
+        if (!root_selector.empty()) {
+            if (!root_selector.starts_with("index:")) {
+                command_result = report_error(domain::Error{
+                    domain::ErrorCode::usage,
+                    "root selector must use index:<n> or label:<name>",
+                });
+                return;
+            }
+            std::uint32_t value = 0;
+            const auto parsed = std::from_chars(
+                root_selector.data() + 6,
+                root_selector.data() + root_selector.size(),
+                value
+            );
+            if (parsed.ec != std::errc{} || parsed.ptr != root_selector.data() + root_selector.size()) {
+                command_result = report_error(domain::Error{
+                    domain::ErrorCode::usage,
+                    "invalid root index",
+                });
+                return;
+            }
+            restore_options.root = value;
+        }
+        command_result = run_restore_command(
+            inspection_options,
+            restore_selector,
+            restore_options
+        );
+    });
+
+    auto* verify = repo->add_subcommand("verify", "Verify repository integrity");
+    bool deep_verify = false;
+    verify->add_flag("--deep", deep_verify, "Validate every referenced chunk");
+    add_inspection_options(verify);
+    verify->callback([&] {
+        command_result = run_verify_command(inspection_options, deep_verify);
     });
 
     auto* probe = repo->add_subcommand("probe", "Probe filesystem capabilities");

@@ -96,6 +96,7 @@ cpcp_enable_warnings(cpcp_repository)
 add_library(cpcp_application STATIC
     src/application/backup_service.cpp
     src/application/credentials.cpp
+    src/application/inspection_service.cpp
     src/application/repository_service.cpp
 )
 target_link_libraries(cpcp_application PUBLIC
@@ -109,6 +110,7 @@ add_library(cpcp_cli STATIC
     src/cli/backup_command.cpp
     src/cli/config_command.cpp
     src/cli/errors.cpp
+    src/cli/inspection_command.cpp
     src/cli/probe_command.cpp
 )
 target_link_libraries(cpcp_cli PUBLIC
@@ -193,6 +195,14 @@ if(BUILD_TESTING)
             -DCPCP_EXECUTABLE=$<TARGET_FILE:cpcp>
             -DCPCP_PROBE_DIR=${CMAKE_CURRENT_BINARY_DIR}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/cli_contract.cmake
+    )
+
+    add_test(
+        NAME restore_cli
+        COMMAND ${CMAKE_COMMAND}
+            -DCPCP_EXECUTABLE=$<TARGET_FILE:cpcp>
+            -DCPCP_PROBE_DIR=${CMAKE_CURRENT_BINARY_DIR}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/restore_cli.cmake
     )
 
     add_test(

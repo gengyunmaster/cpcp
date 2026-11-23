@@ -364,4 +364,25 @@ domain::Result<void> publish_no_replace(
 #endif
 }
 
+domain::Result<void> replace_file(
+    const std::filesystem::path& temporary,
+    const std::filesystem::path& final
+) {
+#ifdef _WIN32
+    if (!MoveFileExW(
+            temporary.c_str(),
+            final.c_str(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH
+        )) {
+        return std::unexpected(Error{ErrorCode::permanent_io, "MoveFileExW failed"});
+    }
+    return {};
+#else
+    if (rename(temporary.c_str(), final.c_str()) != 0) {
+        return std::unexpected(Error{ErrorCode::permanent_io, native_error(errno)});
+    }
+    return {};
+#endif
+}
+
 }

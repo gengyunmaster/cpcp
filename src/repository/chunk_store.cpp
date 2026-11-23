@@ -181,6 +181,10 @@ domain::Result<crypto::Bytes> ChunkStore::read_and_validate(
     return plaintext;
 }
 
+domain::Result<void> ChunkStore::inspect(const ChunkMetadata& chunk) {
+    return check_metadata(chunk);
+}
+
 domain::Result<void> ChunkStore::validate(const ChunkMetadata& chunk) {
     const auto key = crypto::to_hex(chunk.id);
     const auto existing = checks_.find(key);

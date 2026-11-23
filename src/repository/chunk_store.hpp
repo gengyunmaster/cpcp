@@ -30,6 +30,7 @@ public:
 
     domain::Result<ChunkMetadata> put(std::span<const std::byte> plaintext);
     domain::Result<crypto::Bytes> get(const ChunkMetadata& chunk);
+    domain::Result<void> inspect(const ChunkMetadata& chunk);
     domain::Result<void> validate(const ChunkMetadata& chunk);
     void allow_base_evidence(const crypto::Digest& chunk_id);
     void set_revalidate_all(bool enabled);

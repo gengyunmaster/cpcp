@@ -48,5 +48,9 @@ domain::Result<void> publish_no_replace(
     const std::filesystem::path& temporary,
     const std::filesystem::path& final
 );
+domain::Result<void> replace_file(
+    const std::filesystem::path& temporary,
+    const std::filesystem::path& final
+);
 
 }

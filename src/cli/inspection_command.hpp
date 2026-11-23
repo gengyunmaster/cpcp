@@ -31,6 +31,11 @@ int run_verify_command(
     bool refresh_validation_cache
 );
 int run_repo_stats_command(const InspectionCommandOptions& options);
+int run_snapshot_diff_command(
+    const InspectionCommandOptions& options,
+    std::uint64_t left,
+    std::uint64_t right
+);
 int run_snapshot_browse_command(
     const InspectionCommandOptions& options,
     const std::string& selector,

@@ -101,6 +101,7 @@ add_library(cpcp_application STATIC
     src/application/backup_service.cpp
     src/application/check_service.cpp
     src/application/credentials.cpp
+    src/application/diff_service.cpp
     src/application/inspection_service.cpp
     src/application/key_service.cpp
     src/application/recovery_service.cpp
@@ -178,6 +179,7 @@ if(BUILD_TESTING)
         tests/integration/backup_service_test.cpp
         tests/integration/browse_service_test.cpp
         tests/integration/check_service_test.cpp
+        tests/integration/diff_service_test.cpp
         tests/integration/exclusion_test.cpp
         tests/integration/incremental_backup_test.cpp
         tests/integration/key_service_test.cpp

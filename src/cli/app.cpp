@@ -254,6 +254,17 @@ int run(int argc, char** argv) {
         );
     });
 
+    auto* diff = snapshot->add_subcommand("diff", "Compare two authenticated snapshots");
+    std::uint64_t diff_left = 0;
+    std::uint64_t diff_right = 0;
+    diff->add_option("left", diff_left)->required();
+    diff->add_option("right", diff_right)->required();
+    add_inspection_options(diff);
+    diff->add_flag("--ndjson", inspection_options.ndjson, "Stream newline-delimited JSON differences");
+    diff->callback([&] {
+        command_result = run_snapshot_diff_command(inspection_options, diff_left, diff_right);
+    });
+
     auto* restore = snapshot->add_subcommand("restore", "Restore snapshot entries");
     std::string restore_selector;
     application::RestoreOptions restore_options;

@@ -1,6 +1,7 @@
 #include "cli/inspection_command.hpp"
 
 #include "application/credentials.hpp"
+#include "application/diff_service.hpp"
 #include "cli/errors.hpp"
 #include "platform/lock.hpp"
 
@@ -270,6 +271,84 @@ int run_verify_command(
         std::cerr << "Warning: validation-cache refresh failed: " << report->cache_error << '\n';
     }
     return !report->cache_error.empty() || report->degraded_redundancy ? 3 : 0;
+}
+
+int run_snapshot_diff_command(
+    const InspectionCommandOptions& options,
+    std::uint64_t left,
+    std::uint64_t right
+) {
+    if (options.config.json && options.ndjson) {
+        return report_error(Error{ErrorCode::usage, "--json and --ndjson are mutually exclusive"});
+    }
+    auto password = application::read_password(options.config.password_file, !options.config.json && !options.ndjson);
+    if (!password) {
+        return report_error(password.error());
+    }
+    constexpr std::size_t limit = 4096;
+    auto events = nlohmann::json::array();
+    bool header = false;
+    const auto write_header = [&] {
+        if (options.ndjson && !header) {
+            std::cout << nlohmann::json{{"schema", "cpcp.snapshot-diff-header.v1"}}.dump() << '\n';
+            header = true;
+        }
+    };
+    const auto sink = [&](const application::DiffEvent& event) -> domain::Result<void> {
+        const auto document = nlohmann::json{
+            {"root", event.root},
+            {"path", event.path},
+            {"status", event.status},
+            {"reason", event.reason.empty() ? nlohmann::json(nullptr) : nlohmann::json(event.reason)},
+        };
+        write_header();
+        if (options.config.json) {
+            if (events.size() == limit) {
+                return std::unexpected(Error{ErrorCode::usage, "diff exceeds the --json limit; use --ndjson"});
+            }
+            events.push_back(document);
+        } else if (options.ndjson) {
+            auto line = document;
+            line["schema"] = "cpcp.snapshot-diff-entry.v1";
+            std::cout << line.dump() << '\n';
+        } else {
+            std::cout << event.status << "  " << event.path;
+            if (!event.reason.empty()) {
+                std::cout << "  " << event.reason;
+            }
+            std::cout << '\n';
+        }
+        return {};
+    };
+    const auto report = application::diff_snapshots(options.repository, *password, left, right, sink);
+    if (!report) {
+        return report_error(report.error());
+    }
+    write_header();
+    if (options.config.json) {
+        std::cout << nlohmann::json{
+            {"schema", "cpcp.snapshot-diff.v1"},
+            {"left", std::to_string(report->left)},
+            {"right", std::to_string(report->right)},
+            {"left_status", report->left_status},
+            {"right_status", report->right_status},
+            {"total", std::to_string(report->total)},
+            {"differences", std::to_string(report->differences)},
+            {"entries", events},
+        }.dump(2) << '\n';
+    } else if (options.ndjson) {
+        std::cout << nlohmann::json{
+            {"schema", "cpcp.snapshot-diff-summary.v1"},
+            {"left", std::to_string(report->left)},
+            {"right", std::to_string(report->right)},
+            {"total", std::to_string(report->total)},
+            {"differences", std::to_string(report->differences)},
+        }.dump() << '\n';
+    } else {
+        std::cout << "Compared snapshots " << report->left << " and " << report->right
+                  << "; differences: " << report->differences << '\n';
+    }
+    return report->differences == 0 ? 0 : 3;
 }
 
 int run_repo_stats_command(const InspectionCommandOptions& options) {

@@ -18,7 +18,7 @@ The current implementation provides authenticated repository configuration, encr
 - Encrypted journals, bounded checkpoints, chunk-level resume, root remapping, status, and session discard
 - Idempotent main/summary publication after interruption
 - `backup check` with added/missing/type-changed detection, content identities, and repository validation
-- `snapshot list`, `show`, authenticated `ls` / `find`, and full or selective `restore`
+- `snapshot list`, `show`, authenticated `ls` / `find` / `diff`, and full or selective `restore`
 - Bounded JSON and streaming NDJSON snapshot-entry reports
 - Structural and deep `repo verify`, with explicit authenticated validation-cache refresh
 - `repo stats` with logical, stored, and filesystem-allocated byte accounting

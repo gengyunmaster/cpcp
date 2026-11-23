@@ -665,6 +665,8 @@ Garbage collection refuses to run if any active retained snapshot or summary is 
 
 ### 10.7 Snapshot retirement and garbage collection
 
+`snapshot diff` fully authenticates both selected manifests and compares their union through disk-backed keyed path indexes. It reports `added`, `missing`, `type-changed`, `changed`, and `unchanged`, with separate content-identity and metadata reasons. Reverse traversal emits only `missing` entries so each path appears once. Differences return exit code 3; unchanged files alone return success.
+
 `snapshot forget` retires a logical snapshot without deleting chunks. With exclusive lifecycle and writer locks and explicit confirmation, it persists a maintenance transition record, withdraws the summary first, and moves the summary and main stream into `trash/` for the configured grace period. The retired pair leaves normal `latest`, parent, and retained-reference selection only after summary withdrawal. Missing-parent interpretation and retention behavior must follow the independently versioned retention rules.
 
 Garbage collection then operates on the active retained set:

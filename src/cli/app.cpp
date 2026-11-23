@@ -3,6 +3,7 @@
 #include "cli/config_command.hpp"
 #include "cli/backup_command.hpp"
 #include "cli/inspection_command.hpp"
+#include "cli/key_command.hpp"
 #include "cli/probe_command.hpp"
 #include "cli/recovery_command.hpp"
 #include "cli/errors.hpp"
@@ -335,6 +336,56 @@ int run(int argc, char** argv) {
     repair_config->add_flag("--yes", recovery_options.yes);
     repair_config->callback([&] {
         command_result = run_repair_config_command(recovery_options);
+    });
+
+    KeyCommandOptions key_options;
+    const auto add_key_options = [&](CLI::App* command) {
+        command->add_option("--repo", key_options.repository)->default_val(key_options.repository);
+        command->add_option("--password-file", key_options.password_file);
+        command->add_option("--new-password-file", key_options.new_password_file);
+        command->add_flag("--json", key_options.json);
+    };
+    auto* passwd = repo->add_subcommand("passwd", "Replace the authenticated password slot");
+    add_key_options(passwd);
+    passwd->callback([&] {
+        command_result = run_passwd_command(key_options);
+    });
+
+    auto* key = repo->add_subcommand("key", "Manage repository key slots");
+    key->require_subcommand(1);
+    auto* key_list = key->add_subcommand("list", "List key slots");
+    add_key_options(key_list);
+    key_list->callback([&] {
+        command_result = run_key_list_command(key_options);
+    });
+    auto* key_add_password = key->add_subcommand("add-password", "Add another password slot");
+    std::optional<std::string> added_slot_id;
+    key_add_password->add_option("--slot-id", added_slot_id);
+    add_key_options(key_add_password);
+    key_add_password->callback([&] {
+        command_result = run_key_add_password_command(key_options, added_slot_id);
+    });
+    auto* key_add_recovery = key->add_subcommand("add-recovery-key", "Add a high-entropy recovery key");
+    bool show_recovery_key = false;
+    key_add_recovery->add_flag("--show-key", show_recovery_key, "Display the new recovery key once");
+    add_key_options(key_add_recovery);
+    key_add_recovery->callback([&] {
+        command_result = run_key_add_recovery_command(key_options, show_recovery_key);
+    });
+    auto* key_remove = key->add_subcommand("remove", "Remove a different key slot");
+    std::string removed_slot_id;
+    bool remove_confirmed = false;
+    key_remove->add_option("slot", removed_slot_id)->required();
+    key_remove->add_flag("--yes", remove_confirmed, "Confirm key slot removal");
+    add_key_options(key_remove);
+    key_remove->callback([&] {
+        command_result = run_key_remove_command(key_options, removed_slot_id, remove_confirmed);
+    });
+
+    auto* rotate_epoch = repo->add_subcommand("rotate-epoch", "Invalidate prior validation evidence");
+    add_key_options(rotate_epoch);
+    rotate_epoch->callback([&] {
+        command_result = run_rotate_epoch_command(key_options);
     });
 
     auto* probe = repo->add_subcommand("probe", "Probe filesystem capabilities");

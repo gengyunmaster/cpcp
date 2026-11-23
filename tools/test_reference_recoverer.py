@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -64,6 +65,22 @@ def main():
         test.recover(restored)
         for relative in ("a.txt", "duplicate.txt", "empty.txt", "sub/b.txt"):
             assert (restored / "source" / relative).read_bytes() == (test.source / relative).read_bytes(), relative
+
+        recovery_result = test.run(
+            test.cpcp, "repo", "key", "add-recovery-key",
+            "--repo", str(test.repo), "--password-file", str(test.password),
+            "--show-key", "--json"
+        )
+        recovery = test.root / "recovery.txt"
+        recovery.write_text(json.loads(recovery_result.stdout)["recovery_key"] + "\n", encoding="utf-8")
+        os.chmod(recovery, 0o600)
+        test.run(
+            test.cpcp, "repo", "rotate-epoch",
+            "--repo", str(test.repo), "--password-file", str(test.password)
+        )
+        multi_slot = test.root / "multi-slot-restored"
+        test.recover(multi_slot, recovery)
+        assert (multi_slot / "source" / "a.txt").read_bytes() == b"hello"
 
         wrong = test.root / "wrong-password.txt"
         wrong.write_text("wrong password\n", encoding="utf-8")

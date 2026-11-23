@@ -24,7 +24,9 @@ The current implementation provides authenticated repository configuration, encr
 - Independent Python reference recovery and cross-implementation vectors
 - Native durability probes and a MinGW cross-compilation check
 
-See `docs/DESIGN.md`, `docs/CORE_FORMAT.md`, and `docs/PLATFORM_DURABILITY.md`.
+See `docs/DESIGN.md`, `docs/CORE_FORMAT.md`, `docs/JOURNAL_FORMAT.md`, `docs/VALIDATION_CACHE_FORMAT.md`, `docs/KEY_MANAGEMENT.md`, and `docs/PLATFORM_DURABILITY.md`.
+
+Key-slot management includes `repo passwd`, additional passwords, high-entropy recovery keys, removal safeguards, and `repo rotate-epoch`. Slot changes do not revoke older configuration copies.
 
 ## Build
 

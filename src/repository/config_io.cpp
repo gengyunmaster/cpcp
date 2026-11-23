@@ -94,6 +94,38 @@ domain::Result<void> write_new_config_replicas(
     return platform::sync_directory(repository);
 }
 
+domain::Result<void> replace_config_replicas(
+    const std::filesystem::path& repository,
+    const RepositoryConfig& config
+) {
+    const auto serialized = serialize_config(config);
+    if (!serialized) {
+        return std::unexpected(serialized.error());
+    }
+    const Bytes bytes = string_bytes(*serialized);
+    const auto validated = parse_config(bytes);
+    if (!validated) {
+        return std::unexpected(validated.error());
+    }
+    const std::filesystem::path names[] = {
+        repository / "cpcp.config.json",
+        repository / "cpcp.config.backup.json",
+    };
+    for (const auto& name : names) {
+        const auto temporary = repository / "tmp"
+            / (domain::hex_encode(crypto::random_uuid()) + ".config.part");
+        const auto written = write_new_file(temporary, bytes);
+        if (!written) {
+            return written;
+        }
+        const auto replaced = platform::replace_file(temporary, name);
+        if (!replaced) {
+            return replaced;
+        }
+    }
+    return platform::sync_directory(repository);
+}
+
 domain::Result<UnlockedConfig> load_config(
     const std::filesystem::path& repository,
     const crypto::SecretBytes& password
@@ -112,14 +144,15 @@ domain::Result<UnlockedConfig> load_config(
         if (!config) {
             continue;
         }
-        auto master = unlock_config(*config, password);
-        if (!master) {
+        auto unlocked = unlock_config_slot(*config, password);
+        if (!unlocked) {
             continue;
         }
         candidates.push_back(UnlockedConfig{
             std::move(*config),
-            std::move(master).value(),
+            std::move(unlocked->master_key),
             false,
+            std::move(unlocked->slot_id),
         });
     }
     if (candidates.empty()) {

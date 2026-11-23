@@ -88,7 +88,7 @@ domain::Result<crypto::SecretBytes> read_file(const std::filesystem::path& path)
     return from_line(std::move(line));
 }
 
-domain::Result<crypto::SecretBytes> read_prompt() {
+domain::Result<crypto::SecretBytes> read_prompt(std::string_view prompt) {
 #ifndef _WIN32
     if (isatty(STDIN_FILENO) == 0) {
         return std::unexpected(Error{
@@ -116,7 +116,7 @@ domain::Result<crypto::SecretBytes> read_prompt() {
     }
 #endif
 
-    std::cerr << "Password: ";
+    std::cerr << prompt;
     std::string line;
     std::getline(std::cin, line);
 #ifndef _WIN32
@@ -143,7 +143,24 @@ domain::Result<crypto::SecretBytes> read_password(
             "use --password-file in non-interactive mode",
         });
     }
-    return read_prompt();
+    return read_prompt("Password: ");
+}
+
+domain::Result<crypto::SecretBytes> read_password_prompt(
+    const std::optional<std::filesystem::path>& password_file,
+    bool allow_prompt,
+    std::string_view prompt
+) {
+    if (password_file) {
+        return read_file(*password_file);
+    }
+    if (!allow_prompt) {
+        return std::unexpected(Error{
+            ErrorCode::usage,
+            "use --new-password-file in non-interactive mode",
+        });
+    }
+    return read_prompt(prompt);
 }
 
 }

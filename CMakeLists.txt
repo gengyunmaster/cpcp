@@ -102,6 +102,7 @@ add_library(cpcp_application STATIC
     src/application/check_service.cpp
     src/application/credentials.cpp
     src/application/inspection_service.cpp
+    src/application/key_service.cpp
     src/application/recovery_service.cpp
     src/application/repository_service.cpp
 )
@@ -117,6 +118,7 @@ add_library(cpcp_cli STATIC
     src/cli/config_command.cpp
     src/cli/errors.cpp
     src/cli/inspection_command.cpp
+    src/cli/key_command.cpp
     src/cli/probe_command.cpp
     src/cli/recovery_command.cpp
 )
@@ -176,6 +178,7 @@ if(BUILD_TESTING)
         tests/integration/backup_service_test.cpp
         tests/integration/browse_service_test.cpp
         tests/integration/check_service_test.cpp
+        tests/integration/key_service_test.cpp
         tests/integration/resume_service_test.cpp
         tests/integration/validation_cache_test.cpp
     )
@@ -271,6 +274,14 @@ if(BUILD_TESTING)
             -DCPCP_EXECUTABLE=$<TARGET_FILE:cpcp>
             -DCPCP_PROBE_DIR=${CMAKE_CURRENT_BINARY_DIR}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/check_cli.cmake
+    )
+
+    add_test(
+        NAME key_cli
+        COMMAND ${CMAKE_COMMAND}
+            -DCPCP_EXECUTABLE=$<TARGET_FILE:cpcp>
+            -DCPCP_PROBE_DIR=${CMAKE_CURRENT_BINARY_DIR}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/key_cli.cmake
     )
 
     add_test(

@@ -133,8 +133,8 @@ def read_exact(stream, length):
     return data
 
 
-def config_wrap_aad(config):
-    slot = config["key_slots"][0]
+def config_wrap_aad(config, slot):
+    parameters = slot.get("kdf", config["kdf"])
     return (
         b"cpcp.master-key.v1"
         + bytes.fromhex(config["repository_uuid"])
@@ -142,17 +142,38 @@ def config_wrap_aad(config):
         + text(slot["id"])
         + text(slot["type"])
         + b"argon2id"
-        + u64(int(config["kdf"]["memory_kib"]))
-        + u64(int(config["kdf"]["iterations"]))
+        + u64(int(parameters["memory_kib"]))
+        + u64(int(parameters["iterations"]))
         + bytes.fromhex(slot["salt"])
     )
 
 
 def config_auth_bytes(config):
-    slot = config["key_slots"][0]
-    wrapped = slot["wrapped_mk"]
-    return (
-        b"cpcp.config.v1"
+    if "key_slots" not in config.get("feature_versions", {}):
+        slot = config["key_slots"][0]
+        wrapped = slot["wrapped_mk"]
+        return (
+            b"cpcp.config.v1"
+            + u32(config["format_version"])
+            + u64(int(config["revision"]))
+            + bytes.fromhex(config["repository_uuid"])
+            + bytes.fromhex(config["storage_epoch"])
+            + u64(int(config["created_at"]["seconds"]))
+            + u32(config["created_at"]["nanoseconds"])
+            + u32(config["chunk_size"])
+            + text(config["cipher_suite"])
+            + text(config["hash_algorithm"])
+            + b"argon2id"
+            + u64(int(config["kdf"]["memory_kib"]))
+            + u64(int(config["kdf"]["iterations"]))
+            + text(slot["id"])
+            + text(slot["type"])
+            + bytes.fromhex(slot["salt"])
+            + bytes.fromhex(wrapped["nonce"])
+            + blob(bytes.fromhex(wrapped["ciphertext"]))
+        )
+    output = (
+        b"cpcp.config.v2"
         + u32(config["format_version"])
         + u64(int(config["revision"]))
         + bytes.fromhex(config["repository_uuid"])
@@ -162,46 +183,61 @@ def config_auth_bytes(config):
         + u32(config["chunk_size"])
         + text(config["cipher_suite"])
         + text(config["hash_algorithm"])
-        + b"argon2id"
-        + u64(int(config["kdf"]["memory_kib"]))
-        + u64(int(config["kdf"]["iterations"]))
-        + text(slot["id"])
-        + text(slot["type"])
-        + bytes.fromhex(slot["salt"])
-        + bytes.fromhex(wrapped["nonce"])
-        + blob(bytes.fromhex(wrapped["ciphertext"]))
+        + u64(len(config["feature_versions"]))
     )
+    for name, version in sorted(config["feature_versions"].items()):
+        output += text(name) + u64(int(version))
+    output += u64(len(config["key_slots"]))
+    for slot in config["key_slots"]:
+        parameters = slot.get("kdf", config["kdf"])
+        output += (
+            text(slot["id"])
+            + text(slot["type"])
+            + b"argon2id"
+            + u64(int(parameters["memory_kib"]))
+            + u64(int(parameters["iterations"]))
+            + bytes.fromhex(slot["salt"])
+            + bytes.fromhex(slot["wrapped_mk"]["nonce"])
+            + blob(bytes.fromhex(slot["wrapped_mk"]["ciphertext"]))
+        )
+    return output
 
 
 def unlock_config(config, password):
-    if config.get("magic") != "CPCP" or len(config.get("key_slots", [])) != 1:
+    if config.get("magic") != "CPCP" or not config.get("key_slots"):
         raise RecoverError(5, "invalid repository configuration")
-    slot = config["key_slots"][0]
-    if slot["type"] != "password":
-        raise RecoverError(5, "unsupported key slot")
-    salt = bytes.fromhex(slot["salt"])
-    try:
-        kek = argon2id.kdf(
-            32,
-            password,
-            salt,
-            opslimit=int(config["kdf"]["iterations"]),
-            memlimit=int(config["kdf"]["memory_kib"]) * 1024,
-        )
-        master = xchacha_decrypt(
-            kek,
-            bytes.fromhex(slot["wrapped_mk"]["nonce"]),
-            config_wrap_aad(config),
-            bytes.fromhex(slot["wrapped_mk"]["ciphertext"]),
-        )
-    except RecoverError as error:
-        raise RecoverError(5, "password or key-slot authentication failed") from error
-    if len(master) != 32:
-        raise RecoverError(5, "invalid master key length")
-    expected = hmac_sha256(kdf(master, "config"), config_auth_bytes(config))
-    if not hmac.compare_digest(expected, bytes.fromhex(config["authentication_tag"])):
-        raise RecoverError(5, "configuration authentication failed")
-    return master
+    for slot in config["key_slots"]:
+        if slot["type"] not in ("password", "recovery"):
+            continue
+        secret = password
+        if slot["type"] == "recovery" and len(password) == 64:
+            try:
+                secret = bytes.fromhex(password.decode("ascii"))
+            except (ValueError, UnicodeDecodeError):
+                continue
+        parameters = slot.get("kdf", config["kdf"])
+        try:
+            kek = argon2id.kdf(
+                32,
+                secret,
+                bytes.fromhex(slot["salt"]),
+                opslimit=int(parameters["iterations"]),
+                memlimit=int(parameters["memory_kib"]) * 1024,
+            )
+            master = xchacha_decrypt(
+                kek,
+                bytes.fromhex(slot["wrapped_mk"]["nonce"]),
+                config_wrap_aad(config, slot),
+                bytes.fromhex(slot["wrapped_mk"]["ciphertext"]),
+            )
+            if len(master) != 32:
+                continue
+            expected = hmac_sha256(kdf(master, "config"), config_auth_bytes(config))
+            if hmac.compare_digest(expected, bytes.fromhex(config["authentication_tag"])):
+                return master
+        except RecoverError:
+            continue
+    raise RecoverError(5, "password, recovery key, or key-slot authentication failed")
 
 
 def load_config(repository, password):

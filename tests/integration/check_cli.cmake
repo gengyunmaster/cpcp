@@ -57,7 +57,7 @@ endif()
 if(NOT verified_output MATCHES "\"schema\":\"cpcp.check-entry.v1\""
     OR NOT verified_output MATCHES "\"status\":\"verified\""
     OR NOT verified_output MATCHES "\"schema\":\"cpcp.check-summary.v1\""
-    OR NOT verified_output MATCHES "\"mode\":\"content\+repository\""
+    OR NOT verified_output MATCHES "\"mode\":\"content.repository\""
     OR NOT verified_output MATCHES "\"differences\":\"0\"")
     message(FATAL_ERROR "Verified NDJSON report is invalid: ${verified_output}")
 endif()

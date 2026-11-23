@@ -53,9 +53,20 @@ struct MergeItem {
     std::size_t run = 0;
 };
 
+bool record_less(const Bytes& left, const Bytes& right) {
+    for (std::size_t index = 0; index < 32; ++index) {
+        const auto left_byte = std::to_integer<unsigned int>(left[index]);
+        const auto right_byte = std::to_integer<unsigned int>(right[index]);
+        if (left_byte != right_byte) {
+            return left_byte < right_byte;
+        }
+    }
+    return false;
+}
+
 struct MergeCompare {
     bool operator()(const MergeItem& left, const MergeItem& right) const {
-        return right.record < left.record;
+        return record_less(right.record, left.record);
     }
 };
 
@@ -245,7 +256,7 @@ domain::Result<void> SnapshotPathIndex::flush_run() {
             return compacted;
         }
     }
-    std::ranges::sort(buffer_);
+    std::ranges::sort(buffer_, record_less);
     const auto path = temporary_directory_ / ("run-" + std::to_string(next_run_++) + ".bin");
     auto file = platform::BinaryFile::create_new(path);
     if (!file) {

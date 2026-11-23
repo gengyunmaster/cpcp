@@ -58,7 +58,10 @@ std::vector<std::string> repository_state(const std::filesystem::path& repositor
         const auto relative = std::filesystem::relative(entry.path(), repository).generic_string();
         const auto size = entry.is_regular_file() ? entry.file_size() : 0;
         const auto modified = entry.last_write_time().time_since_epoch().count();
-        state.push_back(relative + ":" + std::to_string(size) + ":" + std::to_string(modified));
+        state.push_back(
+            relative + ":" + std::to_string(static_cast<std::uint64_t>(size))
+            + ":" + std::to_string(static_cast<std::int64_t>(modified))
+        );
     }
     std::ranges::sort(state);
     return state;
@@ -172,6 +175,9 @@ TEST_CASE("backup check reports recursive differences and assurance levels") {
     cpcp::crypto::Digest damaged_id{};
     while (true) {
         const auto record = reader.next().value();
+        if (!record.has_value()) {
+            break;
+        }
         if (record->type == cpcp::crypto::RecordType::chunk_batch) {
             damaged_id = cpcp::repository::parse_chunk_batch(*record).value().chunks.front().chunk_id;
             break;

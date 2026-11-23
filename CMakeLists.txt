@@ -28,8 +28,10 @@ target_include_directories(cpcp_domain INTERFACE src)
 target_compile_features(cpcp_domain INTERFACE cxx_std_23)
 
 add_library(cpcp_crypto STATIC
+    src/crypto/aead.cpp
     src/crypto/content_id.cpp
     src/crypto/keys.cpp
+    src/crypto/snapshot_stream.cpp
 )
 target_link_libraries(cpcp_crypto PUBLIC
     cpcp_domain
@@ -56,8 +58,10 @@ cpcp_enable_warnings(cpcp)
 
 if(BUILD_TESTING)
     add_executable(cpcp_unit_tests
+        tests/unit/aead_test.cpp
         tests/unit/content_id_test.cpp
         tests/unit/result_test.cpp
+        tests/unit/snapshot_stream_test.cpp
     )
     target_link_libraries(cpcp_unit_tests PRIVATE
         cpcp_crypto

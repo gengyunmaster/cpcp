@@ -79,6 +79,7 @@ target_link_libraries(cpcp_spool PUBLIC
 cpcp_enable_warnings(cpcp_spool)
 
 add_library(cpcp_repository STATIC
+    src/repository/chunk_set.cpp
     src/repository/chunk_store.cpp
     src/repository/config.cpp
     src/repository/config_io.cpp
@@ -119,6 +120,7 @@ cpcp_enable_warnings(cpcp)
 if(BUILD_TESTING)
     add_executable(cpcp_unit_tests
         tests/unit/aead_test.cpp
+        tests/unit/chunk_set_test.cpp
         tests/unit/chunk_store_test.cpp
         tests/unit/config_test.cpp
         tests/unit/content_id_test.cpp

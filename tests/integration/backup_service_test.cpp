@@ -1,6 +1,8 @@
 #include "application/backup_service.hpp"
 
 #include "application/repository_service.hpp"
+#include "application/inspection_service.hpp"
+#include "application/recovery_service.hpp"
 #include "repository/chunk_store.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -124,6 +126,99 @@ TEST_CASE("backup creates and reuses snapshots with deduplication") {
     }
     const std::vector<std::byte> expected{std::byte{'w'}, std::byte{'o'}, std::byte{'r'}, std::byte{'l'}, std::byte{'d'}};
     REQUIRE(restored["sub/b.txt"] == expected);
+}
+
+TEST_CASE("partial snapshots authenticate failures and require explicit restore approval") {
+    TestDirectory fixture("backup-partial");
+    const auto repository = fixture.path() / "repo";
+    const auto source = fixture.path() / "source";
+    std::filesystem::create_directories(source);
+    write_file(source / "a.txt", "hello");
+    std::filesystem::create_symlink(source / "a.txt", source / "link.txt");
+    cpcp::repository::ConfigOptions config;
+    config.kdf = {8192, 1};
+    config.chunk_size = 1024 * 1024;
+    REQUIRE(cpcp::application::initialize_repository(repository, password(), config));
+
+    const auto complete = cpcp::application::backup_add(
+        repository,
+        password(),
+        {source},
+        {}
+    ).value();
+    REQUIRE(complete.snapshot.status == "complete");
+    REQUIRE(complete.snapshot.stats.selection->policy_skipped_entries == 1);
+
+    cpcp::application::BackupOptions options;
+    options.unsupported_fail = true;
+    const auto rejected = cpcp::application::backup_add(repository, password(), {source}, options);
+    REQUIRE_FALSE(rejected);
+    REQUIRE(rejected.error().code == cpcp::domain::ErrorCode::source_changed);
+
+    const auto unlocked = cpcp::repository::load_config(repository, password()).value();
+    REQUIRE(cpcp::repository::list_snapshots(
+        repository,
+        unlocked.config,
+        unlocked.master_key
+    ).value().size() == 1);
+
+    options.allow_partial = true;
+    const auto partial = cpcp::application::backup_add(
+        repository,
+        password(),
+        {source},
+        options
+    ).value();
+    REQUIRE(partial.snapshot.status == "partial");
+    REQUIRE(partial.snapshot.selection_policy.unsupported == "fail");
+    REQUIRE(partial.snapshot.stats.selection->failed_entries == 1);
+    REQUIRE(partial.snapshot.stats.files == 1);
+    REQUIRE(cpcp::application::verify_repository(repository, password(), {}));
+
+    cpcp::application::RestoreOptions restore;
+    restore.destination = fixture.path() / "latest-rejected";
+    const auto latest = cpcp::application::restore_snapshot(
+        repository,
+        password(),
+        std::nullopt,
+        restore
+    );
+    REQUIRE_FALSE(latest);
+    REQUIRE(latest.error().code == cpcp::domain::ErrorCode::usage);
+
+    restore.destination = fixture.path() / "latest-complete";
+    restore.latest_complete = true;
+    const auto selected_complete = cpcp::application::restore_snapshot(
+        repository,
+        password(),
+        std::nullopt,
+        restore
+    ).value();
+    REQUIRE(selected_complete.snapshot_generation == complete.snapshot.context.generation);
+    REQUIRE(selected_complete.snapshot_status == "complete");
+
+    restore.destination = fixture.path() / "latest-partial";
+    restore.latest_complete = false;
+    restore.allow_partial = true;
+    const auto selected_partial = cpcp::application::restore_snapshot(
+        repository,
+        password(),
+        std::nullopt,
+        restore
+    ).value();
+    REQUIRE(selected_partial.snapshot_generation == partial.snapshot.context.generation);
+    REQUIRE(selected_partial.snapshot_status == "partial");
+    REQUIRE(selected_partial.files == 1);
+
+    const auto repaired = cpcp::application::repair_summary(
+        repository,
+        password(),
+        partial.snapshot.context.generation
+    ).value();
+    REQUIRE(repaired.status == "partial");
+    REQUIRE(repaired.selection_policy.unsupported == "fail");
+    REQUIRE(repaired.stats.selection->failed_entries == 1);
+    REQUIRE(cpcp::application::verify_repository(repository, password(), {}));
 }
 
 }

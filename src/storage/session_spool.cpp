@@ -153,6 +153,14 @@ domain::Result<void> SessionSpoolWriter::finalize(std::span<const std::byte> sum
     return file_->close();
 }
 
+domain::Result<void> SessionSpoolWriter::abort() {
+    if (!file_ || finalized_) {
+        return std::unexpected(Error{ErrorCode::usage, "spool writer is not active"});
+    }
+    finalized_ = true;
+    return file_->close();
+}
+
 bool SessionSpoolWriter::finalized() const {
     return finalized_;
 }

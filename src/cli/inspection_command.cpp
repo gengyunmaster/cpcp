@@ -17,7 +17,7 @@ using domain::ErrorCode;
 namespace {
 
 nlohmann::json stats_json(const repository::SnapshotStats& stats) {
-    return {
+    auto document = nlohmann::json{
         {"files", std::to_string(stats.files)},
         {"directories", std::to_string(stats.directories)},
         {"logical_bytes", std::to_string(stats.logical_bytes)},
@@ -25,6 +25,11 @@ nlohmann::json stats_json(const repository::SnapshotStats& stats) {
         {"new_chunks", std::to_string(stats.new_chunks)},
         {"deduplicated_chunks", std::to_string(stats.deduplicated_chunks)},
     };
+    if (stats.selection) {
+        document["policy_skipped_entries"] = std::to_string(stats.selection->policy_skipped_entries);
+        document["failed_entries"] = std::to_string(stats.selection->failed_entries);
+    }
+    return document;
 }
 
 nlohmann::json summary_json(const repository::SnapshotSummary& summary) {
@@ -42,6 +47,10 @@ nlohmann::json summary_json(const repository::SnapshotSummary& summary) {
         {"snapshot_uuid", domain::hex_encode(summary.context.snapshot_uuid)},
         {"lineage_uuid", domain::hex_encode(summary.context.lineage_uuid)},
         {"status", summary.status},
+        {"selection_policy", {
+            {"unsupported", summary.selection_policy.unsupported},
+            {"one_file_system", summary.selection_policy.one_file_system},
+        }},
         {"roots", roots},
         {"stats", stats_json(summary.stats)},
         {"verification_scope", "authenticated-summary-and-main-length"},
@@ -165,6 +174,7 @@ int run_restore_command(
         generation = value;
     }
     restore.repo_read_only = options.repo_read_only;
+    restore.latest_complete = selector == "latest-complete";
     auto report = application::restore_snapshot(
         options.repository,
         *password,
@@ -178,6 +188,8 @@ int run_restore_command(
     if (options.config.json) {
         std::cout << nlohmann::json{
             {"schema", "cpcp.snapshot-restore.v1"},
+            {"snapshot", std::to_string(report->snapshot_generation)},
+            {"snapshot_status", report->snapshot_status},
             {"files", std::to_string(report->files)},
             {"directories", std::to_string(report->directories)},
             {"metadata_warnings", std::to_string(report->metadata_warnings)},
@@ -185,8 +197,9 @@ int run_restore_command(
             {"verification_scope", "full-manifest-and-selected-chunks"},
         }.dump(2) << '\n';
     } else {
-        std::cout << "Restored " << report->files << " files to "
-                  << restore.destination << '\n';
+        std::cout << "Restored " << report->files << " files from snapshot "
+                  << report->snapshot_generation << " (" << report->snapshot_status
+                  << ") to " << restore.destination << '\n';
     }
     return 0;
 }

@@ -78,6 +78,13 @@ SnapshotStats parse_stats(const json& object) {
     stats.new_chunks = require_uint_string(object, "new_chunks");
     stats.deduplicated_chunks = require_uint_string(object, "deduplicated_chunks");
     stats.chunk_set_commitment = require_hex<32>(object, "chunk_set_commitment");
+    if (object.contains("selection")) {
+        const auto& selection = object.at("selection");
+        stats.selection = SelectionStats{
+            require_uint_string(selection, "policy_skipped_entries"),
+            require_uint_string(selection, "failed_entries"),
+        };
+    }
     return stats;
 }
 
@@ -111,6 +118,15 @@ domain::Result<SnapshotHeaderInfo> parse_snapshot_header(
         header.created_seconds = require_int_string(created, "seconds");
         header.created_nanoseconds = static_cast<std::uint32_t>(require_uint(created, "nanoseconds"));
         header.tool_version = require_string(document, "tool_version");
+        if (document.contains("selection")) {
+            const auto& selection = document.at("selection");
+            header.selection_policy.unsupported = require_string(selection, "unsupported");
+            header.selection_policy.one_file_system = selection.at("one_file_system").get<bool>();
+            if (header.selection_policy.unsupported != "skip"
+                && header.selection_policy.unsupported != "fail") {
+                throw std::invalid_argument("invalid unsupported-entry policy");
+            }
+        }
         header.has_parent = document.at("has_parent").get<bool>();
         if (header.has_parent) {
             header.parent_uuid = require_hex<16>(document, "parent_uuid");
@@ -217,10 +233,36 @@ domain::Result<PolicySkip> parse_policy_skip(const storage::SpoolRecord& record)
     }
 }
 
+domain::Result<FailureInfo> parse_failure(const storage::SpoolRecord& record) {
+    try {
+        const auto document = parse_document(record, "cpcp.failure.v1");
+        return FailureInfo{
+            static_cast<std::uint32_t>(require_uint(document, "root")),
+            require_string(document, "path"),
+            require_string(document, "reason"),
+        };
+    } catch (const std::exception& error) {
+        return std::unexpected(Error{ErrorCode::integrity, error.what()});
+    }
+}
+
 domain::Result<SnapshotStats> parse_final_stats(const storage::SpoolRecord& record) {
     try {
         const auto document = parse_document(record, "cpcp.snapshot-final.v1");
         return parse_stats(document.at("stats"));
+    } catch (const std::exception& error) {
+        return std::unexpected(Error{ErrorCode::integrity, error.what()});
+    }
+}
+
+domain::Result<std::string> parse_final_status(const storage::SpoolRecord& record) {
+    try {
+        const auto document = parse_document(record, "cpcp.snapshot-final.v1");
+        const auto status = require_string(document, "status");
+        if (status != "complete" && status != "partial") {
+            throw std::invalid_argument("invalid final snapshot status");
+        }
+        return status;
     } catch (const std::exception& error) {
         return std::unexpected(Error{ErrorCode::integrity, error.what()});
     }

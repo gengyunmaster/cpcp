@@ -17,9 +17,13 @@ struct RestoreOptions {
     bool yes = false;
     bool strict_metadata = false;
     bool repo_read_only = false;
+    bool allow_partial = false;
+    bool latest_complete = false;
 };
 
 struct RestoreReport {
+    std::uint64_t snapshot_generation = 0;
+    std::string snapshot_status;
     std::uint64_t files = 0;
     std::uint64_t directories = 0;
     std::uint64_t metadata_warnings = 0;

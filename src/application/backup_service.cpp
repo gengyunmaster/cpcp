@@ -28,6 +28,7 @@ using repository::ChunkBatch;
 using repository::DirectoryInfo;
 using repository::FileEnd;
 using repository::FileInfo;
+using repository::FailureInfo;
 using repository::PolicySkip;
 using repository::RootInfo;
 using repository::SnapshotStats;
@@ -330,7 +331,11 @@ domain::Result<BackupReport> backup_add(
         unlocked->master_key,
         context,
         crypto::random_uuid(),
-        parent
+        parent,
+        repository::SelectionPolicy{
+            options.unsupported_fail ? "fail" : "skip",
+            !options.cross_file_systems,
+        }
     );
     if (!writer) {
         return std::unexpected(writer.error());
@@ -338,6 +343,15 @@ domain::Result<BackupReport> backup_add(
 
     SnapshotStats stats;
     std::uint64_t skipped = 0;
+    std::uint64_t failed = 0;
+    const auto select_entry = [&](std::uint32_t root, std::string path, std::string reason) -> domain::Result<void> {
+        if (options.unsupported_fail) {
+            ++failed;
+            return writer->append_failure(FailureInfo{root, std::move(path), std::move(reason)});
+        }
+        ++skipped;
+        return writer->append_policy_skip(PolicySkip{root, std::move(path), std::move(reason)});
+    };
     const auto canonical_repository = std::filesystem::weakly_canonical(repository);
     std::vector<std::string> labels;
     std::uint64_t file_sequence = 0;
@@ -389,15 +403,14 @@ domain::Result<BackupReport> backup_add(
             }
             const auto relative = relative_path(root, entry.path());
             if (!valid_utf8(relative)) {
-                auto skipped_entry = writer->append_policy_skip(PolicySkip{
+                const auto selected = select_entry(
                     root_record.index,
                     display_path(relative),
-                    "non-UTF-8 filename",
-                });
-                if (!skipped_entry) {
-                    return std::unexpected(skipped_entry.error());
+                    "non-UTF-8 filename"
+                );
+                if (!selected) {
+                    return std::unexpected(selected.error());
                 }
-                ++skipped;
                 if (entry.is_directory()) {
                     iterator.disable_recursion_pending();
                 }
@@ -418,15 +431,14 @@ domain::Result<BackupReport> backup_add(
                     continue;
                 }
                 if (!options.cross_file_systems && path_device(entry.path()) != root_device) {
-                    auto skipped_entry = writer->append_policy_skip(PolicySkip{
+                    const auto selected = select_entry(
                         root_record.index,
                         relative,
-                        "filesystem boundary",
-                    });
-                    if (!skipped_entry) {
-                        return std::unexpected(skipped_entry.error());
+                        "filesystem boundary"
+                    );
+                    if (!selected) {
+                        return std::unexpected(selected.error());
                     }
-                    ++skipped;
                     iterator.disable_recursion_pending();
                 } else {
                     auto directory = directory_info(root_record.index, relative, entry.path());
@@ -444,15 +456,14 @@ domain::Result<BackupReport> backup_add(
             }
 
             if (!std::filesystem::is_regular_file(status)) {
-                auto skipped_entry = writer->append_policy_skip(PolicySkip{
+                const auto selected = select_entry(
                     root_record.index,
                     relative,
-                    "unsupported entry type",
-                });
-                if (!skipped_entry) {
-                    return std::unexpected(skipped_entry.error());
+                    "unsupported entry type"
+                );
+                if (!selected) {
+                    return std::unexpected(selected.error());
                 }
-                ++skipped;
                 iterator.increment(error);
                 if (error) {
                     return std::unexpected(Error{ErrorCode::permanent_io, error.message()});
@@ -462,19 +473,31 @@ domain::Result<BackupReport> backup_add(
 
             auto file = platform::BinaryFile::open_read(entry.path());
             if (!file) {
-                return std::unexpected(file.error());
+                const auto failure = writer->append_failure(FailureInfo{
+                    root_record.index,
+                    relative,
+                    file.error().message,
+                });
+                if (!failure) {
+                    return std::unexpected(failure.error());
+                }
+                ++failed;
+                iterator.increment(error);
+                if (error) {
+                    return std::unexpected(Error{ErrorCode::permanent_io, error.message()});
+                }
+                continue;
             }
             const auto before = file->metadata().value();
             if (!options.cross_file_systems && before.device != root_device) {
-                auto skipped_entry = writer->append_policy_skip(PolicySkip{
+                const auto selected = select_entry(
                     root_record.index,
                     relative,
-                    "filesystem boundary",
-                });
-                if (!skipped_entry) {
-                    return std::unexpected(skipped_entry.error());
+                    "filesystem boundary"
+                );
+                if (!selected) {
+                    return std::unexpected(selected.error());
                 }
-                ++skipped;
                 iterator.increment(error);
                 if (error) {
                     return std::unexpected(Error{ErrorCode::permanent_io, error.message()});
@@ -634,12 +657,23 @@ domain::Result<BackupReport> backup_add(
         }
     }
 
+    if (failed != 0 && !options.allow_partial) {
+        const auto aborted = writer->abort();
+        if (!aborted) {
+            return std::unexpected(aborted.error());
+        }
+        return std::unexpected(Error{
+            ErrorCode::source_changed,
+            std::to_string(failed) + " required entries failed; no snapshot was published",
+        });
+    }
+
     const auto commitment = chunk_set->finish();
     if (!commitment) {
         return std::unexpected(commitment.error());
     }
     stats.chunk_set_commitment = *commitment;
-    auto summary = writer->finish(stats);
+    auto summary = writer->finish(stats, failed == 0 ? "complete" : "partial");
     if (!summary) {
         return std::unexpected(summary.error());
     }

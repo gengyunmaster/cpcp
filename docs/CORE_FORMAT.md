@@ -202,3 +202,17 @@ Validation covers independent content-ID and AEAD vectors, key separation, conti
 Core version 1 includes strict bounded JSON record batches, authenticated configuration replicas and password slots, self-describing chunk envelopes, snapshot context records, authenticated summary sidecars, maintenance transition records, and idempotent snapshot finalization.
 
 Journal and resume formats, validation-cache formats, retention metadata, and packed objects remain separately versioned feature work rather than hidden changes to this core format.
+
+## 8. Selection-policy extension
+
+Snapshots written with selection-failure support retain the v1 envelope and add these authenticated fields:
+
+- Summary and snapshot-header `selection_policy` / `selection`: `unsupported` is `skip` or `fail`; `one_file_system` is a boolean.
+- Summary and final-record `stats.selection`: decimal-string `policy_skipped_entries` and `failed_entries` counters.
+- Final-record `status`: `complete` or `partial`, exactly matching the summary.
+
+A `cpcp.failure.v1` record uses record type 8 and contains `root`, `path`, and `reason`. A partial snapshot must contain at least one failure record; a complete snapshot must contain none. Failure and policy-skip paths remain root-relative. Counts must equal the corresponding record totals.
+
+The selection fields are optional when reading older v1 snapshots. Their absence denotes the original `unsupported=skip`, one-filesystem policy without authenticated selection counters. New writers always emit them. Readers reject unknown policies, inconsistent final status, and mismatched counts.
+
+A failed required entry prevents publication unless the caller explicitly allows a partial snapshot. A published partial snapshot remains partial when selected by `latest`; restoration requires explicit approval, while `latest-complete` selects the newest complete generation.

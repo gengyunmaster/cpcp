@@ -36,6 +36,7 @@ public:
         std::span<const std::byte> plaintext
     );
     domain::Result<void> finalize(std::span<const std::byte> summary);
+    domain::Result<void> abort();
     bool finalized() const;
 
 private:

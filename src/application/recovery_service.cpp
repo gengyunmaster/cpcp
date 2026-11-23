@@ -281,6 +281,7 @@ domain::Result<repository::SnapshotSummary> repair_summary(
                 }
                 recovered.created_seconds = header->created_seconds;
                 recovered.created_nanoseconds = header->created_nanoseconds;
+                recovered.selection_policy = header->selection_policy;
                 recovered.has_parent = header->has_parent;
                 recovered.parent_uuid = header->parent_uuid;
                 recovered.parent_summary_digest = header->parent_summary_digest;

@@ -77,8 +77,32 @@ std::array<std::byte, N> require_hex(const json& object, std::string_view key) {
     return *decoded;
 }
 
-json stats_json(const SnapshotStats& stats) {
+json selection_policy_json(const SelectionPolicy& policy) {
     return {
+        {"unsupported", policy.unsupported},
+        {"one_file_system", policy.one_file_system},
+    };
+}
+
+SelectionPolicy parse_selection_policy(const json& object) {
+    SelectionPolicy policy;
+    policy.unsupported = require_string(object, "unsupported");
+    policy.one_file_system = object.at("one_file_system").get<bool>();
+    if ((policy.unsupported != "skip" && policy.unsupported != "fail")) {
+        throw std::invalid_argument("invalid unsupported-entry policy");
+    }
+    return policy;
+}
+
+json selection_stats_json(const SelectionStats& selection) {
+    return {
+        {"policy_skipped_entries", uint_string(selection.policy_skipped_entries)},
+        {"failed_entries", uint_string(selection.failed_entries)},
+    };
+}
+
+json stats_json(const SnapshotStats& stats) {
+    auto document = json{
         {"files", uint_string(stats.files)},
         {"directories", uint_string(stats.directories)},
         {"logical_bytes", uint_string(stats.logical_bytes)},
@@ -87,6 +111,10 @@ json stats_json(const SnapshotStats& stats) {
         {"deduplicated_chunks", uint_string(stats.deduplicated_chunks)},
         {"chunk_set_commitment", crypto::to_hex(stats.chunk_set_commitment)},
     };
+    if (stats.selection) {
+        document["selection"] = selection_stats_json(*stats.selection);
+    }
+    return document;
 }
 
 SnapshotStats parse_stats(const json& object) {
@@ -98,6 +126,13 @@ SnapshotStats parse_stats(const json& object) {
     stats.new_chunks = require_string_uint(object, "new_chunks");
     stats.deduplicated_chunks = require_string_uint(object, "deduplicated_chunks");
     stats.chunk_set_commitment = require_hex<32>(object, "chunk_set_commitment");
+    if (object.contains("selection")) {
+        const auto& selection = object.at("selection");
+        stats.selection = SelectionStats{
+            require_string_uint(selection, "policy_skipped_entries"),
+            require_string_uint(selection, "failed_entries"),
+        };
+    }
     return stats;
 }
 
@@ -125,6 +160,7 @@ json summary_json(const SnapshotSummary& summary) {
         {"generation", uint_string(summary.context.generation)},
         {"session_uuid", domain::hex_encode(summary.session_uuid)},
         {"status", summary.status},
+        {"selection_policy", selection_policy_json(summary.selection_policy)},
         {"has_parent", summary.has_parent},
         {"parent_uuid", summary.has_parent
             ? json(domain::hex_encode(summary.parent_uuid))
@@ -155,6 +191,12 @@ SnapshotSummary parse_summary(const json& document) {
     summary.session_uuid = require_hex<16>(document, "session_uuid");
     summary.context.session_uuid = summary.session_uuid;
     summary.status = require_string(document, "status");
+    if (summary.status != "complete" && summary.status != "partial") {
+        throw std::invalid_argument("invalid snapshot status");
+    }
+    if (document.contains("selection_policy")) {
+        summary.selection_policy = parse_selection_policy(document.at("selection_policy"));
+    }
     summary.has_parent = document.at("has_parent").get<bool>();
     if (summary.has_parent) {
         summary.parent_uuid = require_hex<16>(document, "parent_uuid");
@@ -419,12 +461,17 @@ domain::Result<SnapshotWriter> SnapshotWriter::create(
     const crypto::SecureKey& master_key,
     crypto::SnapshotContext context,
     domain::Uuid session_uuid,
-    std::optional<SnapshotSummary> parent
+    std::optional<SnapshotSummary> parent,
+    SelectionPolicy selection_policy
 ) {
+    if (selection_policy.unsupported != "skip" && selection_policy.unsupported != "fail") {
+        return std::unexpected(Error{ErrorCode::usage, "invalid unsupported-entry policy"});
+    }
     SnapshotSummary summary;
     context.session_uuid = session_uuid;
     summary.context = context;
     summary.session_uuid = context.session_uuid;
+    summary.selection_policy = std::move(selection_policy);
     if (parent) {
         summary.has_parent = true;
         summary.parent_uuid = parent->context.snapshot_uuid;
@@ -482,10 +529,7 @@ domain::Result<SnapshotWriter> SnapshotWriter::create(
         {"parent_summary_digest", result.summary_.has_parent
             ? json(crypto::to_hex(result.summary_.parent_summary_digest))
             : json(nullptr)},
-        {"selection", {
-            {"unsupported", "skip"},
-            {"one_file_system", true},
-        }},
+        {"selection", selection_policy_json(result.summary_.selection_policy)},
     });
     if (!appended) {
         return std::unexpected(appended.error());
@@ -578,6 +622,7 @@ domain::Result<void> SnapshotWriter::append_file_end(const FileEnd& end) {
 }
 
 domain::Result<void> SnapshotWriter::append_policy_skip(const PolicySkip& skip) {
+    ++selection_stats_.policy_skipped_entries;
     return append(crypto::RecordType::policy_skip, {
         {"schema", "cpcp.policy-skip.v1"},
         {"root", skip.root},
@@ -586,10 +631,27 @@ domain::Result<void> SnapshotWriter::append_policy_skip(const PolicySkip& skip) 
     });
 }
 
-domain::Result<SnapshotSummary> SnapshotWriter::finish(SnapshotStats stats) {
+domain::Result<void> SnapshotWriter::append_failure(const FailureInfo& failure) {
+    ++selection_stats_.failed_entries;
+    return append(crypto::RecordType::failure, {
+        {"schema", "cpcp.failure.v1"},
+        {"root", failure.root},
+        {"path", failure.path},
+        {"reason", failure.reason},
+    });
+}
+
+domain::Result<SnapshotSummary> SnapshotWriter::finish(SnapshotStats stats, std::string status) {
     if (finished_) {
         return std::unexpected(Error{ErrorCode::usage, "snapshot writer is already finished"});
     }
+    if ((status != "complete" && status != "partial")
+        || (status == "complete" && selection_stats_.failed_entries != 0)
+        || (status == "partial" && selection_stats_.failed_entries == 0)) {
+        return std::unexpected(Error{ErrorCode::usage, "snapshot status does not match its failure records"});
+    }
+    stats.selection = selection_stats_;
+    summary_.status = std::move(status);
     summary_.stats = stats;
     const auto final = writer_->finalize(json_bytes({
         {"schema", "cpcp.snapshot-final.v1"},
@@ -654,6 +716,28 @@ domain::Result<SnapshotSummary> SnapshotWriter::finish(SnapshotStats stats) {
     }
     finished_ = true;
     return summary_;
+}
+
+domain::Result<void> SnapshotWriter::abort() {
+    if (finished_) {
+        return std::unexpected(Error{ErrorCode::usage, "snapshot writer is not active"});
+    }
+    auto closed = writer_->abort();
+    if (!closed) {
+        return closed;
+    }
+    finished_ = true;
+    const auto basename = snapshot_basename(summary_.context.generation, summary_.context.snapshot_uuid);
+    std::error_code error;
+    std::filesystem::remove(repository_ / "tmp" / (basename + ".part"), error);
+    if (error) {
+        return std::unexpected(Error{ErrorCode::permanent_io, error.message()});
+    }
+    std::filesystem::remove(repository_ / "tmp" / (basename + ".summary.part"), error);
+    if (error) {
+        return std::unexpected(Error{ErrorCode::permanent_io, error.message()});
+    }
+    return {};
 }
 
 domain::Result<SnapshotReader> SnapshotReader::open(

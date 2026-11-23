@@ -39,13 +39,16 @@ int run_backup_add_command(
                 {"deduplicated_chunks", std::to_string(snapshot.stats.deduplicated_chunks)},
             }},
             {"skipped_entries", std::to_string(report->skipped_entries)},
+            {"failed_entries", std::to_string(snapshot.stats.selection
+                ? snapshot.stats.selection->failed_entries
+                : 0)},
         }.dump(2) << '\n';
     } else {
         std::cout << "Published snapshot " << snapshot.context.generation
                   << " with " << snapshot.stats.files << " files and "
                   << snapshot.stats.new_chunks << " new chunks\n";
     }
-    return 0;
+    return snapshot.status == "partial" ? 3 : 0;
 }
 
 }

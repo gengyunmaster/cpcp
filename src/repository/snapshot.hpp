@@ -58,6 +58,22 @@ struct PolicySkip {
     std::string reason;
 };
 
+struct FailureInfo {
+    std::uint32_t root;
+    std::string path;
+    std::string reason;
+};
+
+struct SelectionPolicy {
+    std::string unsupported = "skip";
+    bool one_file_system = true;
+};
+
+struct SelectionStats {
+    std::uint64_t policy_skipped_entries = 0;
+    std::uint64_t failed_entries = 0;
+};
+
 struct SnapshotStats {
     std::uint64_t files = 0;
     std::uint64_t directories = 0;
@@ -66,6 +82,7 @@ struct SnapshotStats {
     std::uint64_t new_chunks = 0;
     std::uint64_t deduplicated_chunks = 0;
     crypto::Digest chunk_set_commitment{};
+    std::optional<SelectionStats> selection;
 };
 
 struct SnapshotSummary {
@@ -75,6 +92,7 @@ struct SnapshotSummary {
     crypto::Digest parent_summary_digest{};
     bool has_parent = false;
     std::string status = "complete";
+    SelectionPolicy selection_policy;
     std::int64_t created_seconds = 0;
     std::uint32_t created_nanoseconds = 0;
     std::vector<RootInfo> roots;
@@ -119,7 +137,8 @@ public:
         const crypto::SecureKey& master_key,
         crypto::SnapshotContext context,
         domain::Uuid session_uuid,
-        std::optional<SnapshotSummary> parent = std::nullopt
+        std::optional<SnapshotSummary> parent = std::nullopt,
+        SelectionPolicy selection_policy = {}
     );
 
     domain::Result<void> append_root(const RootInfo& root);
@@ -128,7 +147,9 @@ public:
     domain::Result<void> append_chunk_batch(const ChunkBatch& batch);
     domain::Result<void> append_file_end(const FileEnd& end);
     domain::Result<void> append_policy_skip(const PolicySkip& skip);
-    domain::Result<SnapshotSummary> finish(SnapshotStats stats);
+    domain::Result<void> append_failure(const FailureInfo& failure);
+    domain::Result<SnapshotSummary> finish(SnapshotStats stats, std::string status = "complete");
+    domain::Result<void> abort();
 
 private:
     SnapshotWriter(
@@ -149,6 +170,7 @@ private:
     SnapshotSummary summary_;
     crypto::SecureKey snapshot_key_;
     std::unique_ptr<storage::SessionSpoolWriter> writer_;
+    SelectionStats selection_stats_;
     bool finished_ = false;
 };
 
@@ -193,6 +215,7 @@ struct SnapshotHeaderInfo {
     std::int64_t created_seconds = 0;
     std::uint32_t created_nanoseconds = 0;
     std::string tool_version;
+    SelectionPolicy selection_policy;
     bool has_parent = false;
     domain::Uuid parent_uuid{};
     crypto::Digest parent_summary_digest{};
@@ -210,6 +233,8 @@ domain::Result<FileInfo> parse_file_header(const storage::SpoolRecord& record);
 domain::Result<ChunkBatch> parse_chunk_batch(const storage::SpoolRecord& record);
 domain::Result<FileEnd> parse_file_end(const storage::SpoolRecord& record);
 domain::Result<PolicySkip> parse_policy_skip(const storage::SpoolRecord& record);
+domain::Result<FailureInfo> parse_failure(const storage::SpoolRecord& record);
 domain::Result<SnapshotStats> parse_final_stats(const storage::SpoolRecord& record);
+domain::Result<std::string> parse_final_status(const storage::SpoolRecord& record);
 
 }

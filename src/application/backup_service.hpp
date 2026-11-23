@@ -13,6 +13,8 @@ struct BackupOptions {
     bool full_source_read = false;
     bool cross_file_systems = false;
     bool no_parent = false;
+    bool allow_partial = false;
+    bool unsupported_fail = false;
 };
 
 struct BackupReport {

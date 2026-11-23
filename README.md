@@ -2,7 +2,7 @@
 
 cpcp is an open-source encrypted, content-addressed backup CLI written in modern C++. It supports local repositories on Windows, Linux, and macOS, with particular attention to interrupted transfers and recoverability.
 
-The M1 implementation provides authenticated repository configuration, encrypted chunks and snapshots, deduplication, recovery paths, and an independent Python reference recoverer. It has not received an independent security audit. Do not use cpcp as the only copy of important data.
+The current implementation provides authenticated repository configuration, encrypted chunks and snapshots, deduplication, partial-snapshot recovery, and an independent Python reference recoverer. It has not received an independent security audit. Do not use cpcp as the only copy of important data.
 
 ## Implemented capabilities
 

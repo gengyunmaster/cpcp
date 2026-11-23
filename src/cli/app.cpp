@@ -89,14 +89,20 @@ int run(int argc, char** argv) {
     std::vector<std::filesystem::path> backup_roots;
     std::filesystem::path backup_repository = ".";
     application::BackupOptions backup_options;
+    std::string unsupported_policy = "skip";
     add->add_option("paths", backup_roots, "Source root directories")->required()->expected(-1);
     add->add_option("--repo", backup_repository)->default_val(backup_repository);
     add->add_flag("--revalidate-all", backup_options.revalidate_all, "Revalidate every referenced chunk");
     add->add_flag("--full-source-read", backup_options.full_source_read, "Read every source byte");
     add->add_flag("--cross-file-systems", backup_options.cross_file_systems, "Allow mounted filesystem traversal");
     add->add_flag("--no-parent", backup_options.no_parent, "Start a new snapshot lineage");
+    add->add_flag("--allow-partial", backup_options.allow_partial, "Publish a partial snapshot when required entries fail");
+    add->add_option("--unsupported", unsupported_policy, "Policy for unsupported entries: skip or fail")
+        ->default_val(unsupported_policy)
+        ->check(CLI::IsMember({"skip", "fail"}));
     add_password_options(add);
     add->callback([&] {
+        backup_options.unsupported_fail = unsupported_policy == "fail";
         command_result = run_backup_add_command(
             backup_roots,
             BackupCommandOptions{backup_repository, backup_options, config_options}
@@ -140,6 +146,7 @@ int run(int argc, char** argv) {
     restore->add_flag("--overwrite", restore_options.overwrite);
     restore->add_flag("--yes", restore_options.yes);
     restore->add_flag("--strict-metadata", restore_options.strict_metadata);
+    restore->add_flag("--allow-partial", restore_options.allow_partial, "Allow restoration from a partial snapshot");
     add_inspection_options(restore);
     restore->callback([&] {
         if (!root_selector.empty()) {

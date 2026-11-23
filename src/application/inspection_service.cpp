@@ -10,6 +10,7 @@
 #include <chrono>
 #include <filesystem>
 #include <optional>
+#include <ranges>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -75,7 +76,11 @@ bool same_stats(
         && left.chunk_references == right.chunk_references
         && left.new_chunks == right.new_chunks
         && left.deduplicated_chunks == right.deduplicated_chunks
-        && left.chunk_set_commitment == right.chunk_set_commitment;
+        && left.chunk_set_commitment == right.chunk_set_commitment
+        && left.selection.has_value() == right.selection.has_value()
+        && (!left.selection || !right.selection
+            || (left.selection->policy_skipped_entries == right.selection->policy_skipped_entries
+                && left.selection->failed_entries == right.selection->failed_entries));
 }
 
 domain::Result<std::uint64_t> verify_snapshot(
@@ -95,6 +100,8 @@ domain::Result<std::uint64_t> verify_snapshot(
     std::optional<crypto::FileIdentityBuilder> identity;
     std::uint64_t expected_batch = 0;
     std::uint64_t chunk_count = 0;
+    std::uint64_t policy_skips = 0;
+    std::uint64_t failures = 0;
     while (true) {
         auto record = reader->next();
         if (!record) {
@@ -196,23 +203,48 @@ domain::Result<std::uint64_t> verify_snapshot(
             if (!skipped) {
                 return std::unexpected(skipped.error());
             }
+            ++policy_skips;
+            break;
+        }
+        case crypto::RecordType::failure: {
+            auto failure = repository::parse_failure(**record);
+            if (!failure || !safe_relative(failure->path, true)) {
+                return std::unexpected(Error{ErrorCode::integrity, "invalid snapshot failure record"});
+            }
+            ++failures;
             break;
         }
         case crypto::RecordType::final_summary: {
             auto stats = repository::parse_final_stats(**record);
-            if (!stats || !same_stats(*stats, summary.stats)) {
-                return std::unexpected(Error{ErrorCode::integrity, "snapshot final statistics mismatch"});
+            auto status = repository::parse_final_status(**record);
+            if (!stats || !status || !same_stats(*stats, summary.stats)
+                || *status != summary.status) {
+                return std::unexpected(Error{ErrorCode::integrity, "snapshot final semantics mismatch"});
+            }
+            break;
+        }
+        case crypto::RecordType::snapshot_header: {
+            auto header = repository::parse_snapshot_header(**record);
+            if (!header
+                || header->selection_policy.unsupported != summary.selection_policy.unsupported
+                || header->selection_policy.one_file_system != summary.selection_policy.one_file_system) {
+                return std::unexpected(Error{ErrorCode::integrity, "snapshot selection policy mismatch"});
             }
             break;
         }
         case crypto::RecordType::context:
-        case crypto::RecordType::snapshot_header:
-        case crypto::RecordType::failure:
             break;
         }
     }
     if (current || identity) {
         return std::unexpected(Error{ErrorCode::integrity, "snapshot ends with an incomplete file"});
+    }
+    if (summary.stats.selection
+        && (summary.stats.selection->policy_skipped_entries != policy_skips
+            || summary.stats.selection->failed_entries != failures
+            || (summary.status == "complete" && failures != 0)
+            || (summary.status == "partial" && failures == 0))) {
+        return std::unexpected(Error{ErrorCode::integrity, "snapshot selection statistics mismatch"});
     }
     return chunk_count;
 }
@@ -309,13 +341,30 @@ domain::Result<RestoreReport> restore_snapshot(
     if (!summaries || summaries->empty()) {
         return std::unexpected(Error{ErrorCode::permanent_io, "no snapshots are available"});
     }
-    const auto summary = generation
-        ? std::ranges::find_if(*summaries, [&](const repository::SnapshotSummary& candidate) {
+    auto summary = summaries->end();
+    if (generation) {
+        summary = std::ranges::find_if(*summaries, [&](const repository::SnapshotSummary& candidate) {
             return candidate.context.generation == *generation;
-        })
-        : std::ranges::prev(summaries->end());
+        });
+    } else if (options.latest_complete) {
+        auto reversed = std::views::reverse(*summaries);
+        const auto complete = std::ranges::find_if(
+            reversed,
+            [](const repository::SnapshotSummary& candidate) {
+                return candidate.status == "complete";
+            }
+        );
+        if (complete != reversed.end()) {
+            summary = std::prev(complete.base());
+        }
+    } else {
+        summary = std::ranges::prev(summaries->end());
+    }
     if (summary == summaries->end()) {
         return std::unexpected(Error{ErrorCode::permanent_io, "snapshot generation was not found"});
+    }
+    if (summary->status == "partial" && !options.allow_partial) {
+        return std::unexpected(Error{ErrorCode::usage, "restoring a partial snapshot requires --allow-partial"});
     }
     if (options.path && !safe_relative(*options.path, false)) {
         return std::unexpected(Error{ErrorCode::usage, "restore path must remain relative to its root"});
@@ -349,6 +398,8 @@ domain::Result<RestoreReport> restore_snapshot(
     }
 
     RestoreReport report;
+    report.snapshot_generation = summary->context.generation;
+    report.snapshot_status = summary->status;
     std::optional<FileInfo> current;
     std::optional<crypto::FileIdentityBuilder> identity;
     std::optional<platform::BinaryFile> output;

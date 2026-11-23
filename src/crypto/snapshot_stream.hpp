@@ -32,6 +32,7 @@ enum class RecordType : std::uint8_t {
     file_end = 6,
     policy_skip = 7,
     failure = 8,
+    directory = 9,
     final_summary = 255,
 };
 

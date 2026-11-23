@@ -32,6 +32,7 @@ bool valid_record_type(RecordType type) {
     case RecordType::file_end:
     case RecordType::policy_skip:
     case RecordType::failure:
+    case RecordType::directory:
     case RecordType::final_summary:
         return true;
     }

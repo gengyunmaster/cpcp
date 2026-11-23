@@ -53,7 +53,8 @@ std::uint32_t decode_u32(std::span<const std::byte> input) {
 domain::Result<void> SessionSpoolWriter::create(
     const std::filesystem::path& path,
     const crypto::SecureKey& key,
-    const crypto::SnapshotContext& context
+    const crypto::SnapshotContext& context,
+    crypto::StreamDomain domain
 ) {
     if (file_ || encoder_) {
         return std::unexpected(Error{ErrorCode::usage, "spool writer is already initialized"});
@@ -64,11 +65,11 @@ domain::Result<void> SessionSpoolWriter::create(
         return std::unexpected(file.error());
     }
     file_.emplace(std::move(file).value());
-    encoder_.emplace(context, key, crypto::StreamDomain::session_spool);
+    encoder_.emplace(context, key, domain);
 
     const Bytes header{
         std::byte{'C'},
-        std::byte{'P'},
+        domain == crypto::StreamDomain::snapshot ? std::byte{'N'} : std::byte{'P'},
         std::byte{'S'},
         std::byte{'P'},
         std::byte{1},
@@ -129,7 +130,8 @@ bool SessionSpoolWriter::finalized() const {
 domain::Result<void> SessionSpoolReader::open(
     const std::filesystem::path& path,
     const crypto::SecureKey& key,
-    const crypto::SnapshotContext& context
+    const crypto::SnapshotContext& context,
+    crypto::StreamDomain domain
 ) {
     if (file_ || decoder_) {
         return std::unexpected(Error{ErrorCode::usage, "spool reader is already initialized"});
@@ -140,15 +142,18 @@ domain::Result<void> SessionSpoolReader::open(
         return std::unexpected(file.error());
     }
     file_.emplace(std::move(file).value());
+    if (crypto_hash_sha256_init(&digest_state_) != 0) {
+        return std::unexpected(Error{ErrorCode::internal, "spool digest initialization failed"});
+    }
 
     std::array<std::byte, file_header_size> header{};
-    auto result = file_->read_exact(header);
+    auto result = read_tracked(header);
     if (!result) {
         return result;
     }
     const Bytes expected{
         std::byte{'C'},
-        std::byte{'P'},
+        domain == crypto::StreamDomain::snapshot ? std::byte{'N'} : std::byte{'P'},
         std::byte{'S'},
         std::byte{'P'},
         std::byte{1},
@@ -159,12 +164,29 @@ domain::Result<void> SessionSpoolReader::open(
     }
 
     std::array<std::byte, crypto::snapshot_header_size> stream_header{};
-    result = file_->read_exact(stream_header);
+    result = read_tracked(stream_header);
     if (!result) {
         return result;
     }
-    decoder_.emplace(context, key, stream_header, crypto::StreamDomain::session_spool);
+    decoder_.emplace(context, key, stream_header, domain);
     return {};
+}
+
+domain::Result<void> SessionSpoolReader::read_tracked(std::span<std::byte> output) {
+    auto result = file_->read_exact(output);
+    if (result) {
+        update_digest(output);
+        stored_length_ += output.size();
+    }
+    return result;
+}
+
+void SessionSpoolReader::update_digest(std::span<const std::byte> bytes) {
+    crypto_hash_sha256_update(
+        &digest_state_,
+        reinterpret_cast<const unsigned char*>(bytes.data()),
+        static_cast<unsigned long long>(bytes.size())
+    );
 }
 
 domain::Result<std::optional<SpoolRecord>> SessionSpoolReader::next() {
@@ -176,7 +198,7 @@ domain::Result<std::optional<SpoolRecord>> SessionSpoolReader::next() {
     }
 
     std::array<std::byte, frame_header_size> header{};
-    auto result = file_->read_exact(header);
+    auto result = read_tracked(header);
     if (!result) {
         return std::unexpected(result.error());
     }
@@ -189,7 +211,7 @@ domain::Result<std::optional<SpoolRecord>> SessionSpoolReader::next() {
     }
 
     Bytes ciphertext(length);
-    result = file_->read_exact(ciphertext);
+    result = read_tracked(ciphertext);
     if (!result) {
         return std::unexpected(result.error());
     }
@@ -220,6 +242,22 @@ domain::Result<void> SessionSpoolReader::finish() const {
         return std::unexpected(Error{ErrorCode::integrity, "spool is missing FINAL"});
     }
     return decoder_->finish();
+}
+
+domain::Result<crypto::Digest> SessionSpoolReader::ciphertext_digest() const {
+    if (!done_) {
+        return std::unexpected(Error{ErrorCode::usage, "spool digest requires FINAL"});
+    }
+    crypto_hash_sha256_state state = digest_state_;
+    crypto::Digest digest;
+    if (crypto_hash_sha256_final(&state, reinterpret_cast<unsigned char*>(digest.data())) != 0) {
+        return std::unexpected(Error{ErrorCode::internal, "spool digest finalization failed"});
+    }
+    return digest;
+}
+
+std::uint64_t SessionSpoolReader::stored_length() const {
+    return stored_length_;
 }
 
 }

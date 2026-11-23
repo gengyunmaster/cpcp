@@ -83,10 +83,13 @@ add_library(cpcp_repository STATIC
     src/repository/chunk_store.cpp
     src/repository/config.cpp
     src/repository/config_io.cpp
+    src/repository/snapshot.cpp
+    src/repository/snapshot_records.cpp
 )
 target_link_libraries(cpcp_repository PUBLIC
     cpcp_crypto
     cpcp_platform
+    cpcp_spool
 )
 cpcp_enable_warnings(cpcp_repository)
 
@@ -127,6 +130,7 @@ if(BUILD_TESTING)
         tests/unit/file_identity_test.cpp
         tests/unit/result_test.cpp
         tests/unit/snapshot_stream_test.cpp
+        tests/unit/snapshot_test.cpp
     )
     target_link_libraries(cpcp_unit_tests PRIVATE
         cpcp_application

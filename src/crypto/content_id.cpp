@@ -85,6 +85,18 @@ int hexadecimal_value(char value) {
 
 }
 
+domain::Result<Digest> compute_hmac_sha256(
+    const SecureKey& key,
+    std::span<const std::byte> input
+) {
+    auto state = initialize_state(key);
+    if (!state) {
+        return std::unexpected(state.error());
+    }
+    update(*state, input);
+    return finalize(*state);
+}
+
 domain::Result<Digest> compute_chunk_id(
     const SecureKey& key,
     std::span<const std::byte> plaintext

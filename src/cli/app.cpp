@@ -1,5 +1,6 @@
 #include "cli/app.hpp"
 
+#include "cli/config_command.hpp"
 #include "cli/probe_command.hpp"
 
 #include <CLI/CLI.hpp>
@@ -16,6 +17,61 @@ int run(int argc, char** argv) {
     int command_result = 0;
     auto* repo = app.add_subcommand("repo", "Repository operations");
     repo->require_subcommand(1);
+
+    ConfigCommandOptions config_options;
+    const auto add_password_options = [&](CLI::App* command) {
+        command->add_option(
+            "--password-file",
+            config_options.password_file,
+            "Read the repository password from a protected file"
+        );
+        command->add_flag("--json", config_options.json, "Emit JSON output");
+    };
+
+    auto* init = repo->add_subcommand("init", "Initialize a repository");
+    std::filesystem::path init_directory;
+    init->add_option("directory", init_directory, "Empty repository directory")->required();
+    init->add_option("--kdf-memory", config_options.kdf_memory)
+        ->default_val(config_options.kdf_memory);
+    init->add_option("--kdf-iterations", config_options.kdf_iterations)
+        ->default_val(config_options.kdf_iterations);
+    init->add_option("--chunk-size", config_options.chunk_size)
+        ->default_val(config_options.chunk_size);
+    add_password_options(init);
+    init->callback([&] {
+        command_result = run_init_command(init_directory, config_options);
+    });
+
+    auto* export_header = repo->add_subcommand("export-header", "Export an authenticated header");
+    std::filesystem::path export_output;
+    std::filesystem::path export_repository = ".";
+    export_header->add_option("output", export_output, "Exported header path")->required();
+    export_header->add_option("--repo", export_repository)
+        ->default_val(export_repository);
+    add_password_options(export_header);
+    export_header->callback([&] {
+        command_result = run_export_header_command(
+            export_repository,
+            export_output,
+            config_options
+        );
+    });
+
+    auto* import_header = repo->add_subcommand("import-header", "Import an authenticated header");
+    std::filesystem::path import_path;
+    std::filesystem::path import_repository = ".";
+    import_header->add_option("header", import_path, "Header to import")->required();
+    import_header->add_option("--repo", import_repository)
+        ->default_val(import_repository);
+    add_password_options(import_header);
+    import_header->callback([&] {
+        command_result = run_import_header_command(
+            import_path,
+            import_repository,
+            config_options
+        );
+    });
+
     auto* probe = repo->add_subcommand("probe", "Probe filesystem capabilities");
     std::filesystem::path directory;
     platform::ProbeOptions options;

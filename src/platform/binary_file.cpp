@@ -288,7 +288,7 @@ domain::Result<FileMetadata> BinaryFile::metadata() const {
     metadata.mtime_seconds = status.st_mtim.tv_sec;
     metadata.mtime_nanoseconds = static_cast<std::uint32_t>(status.st_mtim.tv_nsec);
 #endif
-    metadata.device = status.st_dev;
+    metadata.device = static_cast<std::uint64_t>(status.st_dev);
     metadata.inode = status.st_ino;
     metadata.mode = static_cast<std::uint32_t>(status.st_mode & 07777);
     return metadata;

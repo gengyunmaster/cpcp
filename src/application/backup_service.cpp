@@ -124,7 +124,7 @@ std::uint64_t path_device(const std::filesystem::path& path) {
     if (stat(path.c_str(), &status) != 0) {
         throw std::system_error(errno, std::generic_category());
     }
-    return status.st_dev;
+    return static_cast<std::uint64_t>(status.st_dev);
 #endif
 }
 

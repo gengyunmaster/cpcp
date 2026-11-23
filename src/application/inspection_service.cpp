@@ -61,10 +61,8 @@ std::size_t path_depth(const std::string& path) {
     if (path.empty() || path == ".") {
         return 0;
     }
-    return static_cast<std::size_t>(std::distance(
-        std::filesystem::path(path).begin(),
-        std::filesystem::path(path).end()
-    ));
+    const std::filesystem::path native(path);
+    return static_cast<std::size_t>(std::distance(native.begin(), native.end()));
 }
 
 bool same_stats(

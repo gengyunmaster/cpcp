@@ -12,16 +12,22 @@ jobs:
         include:
           - os: ubuntu-latest
             preset: dev
+            triplet: x64-linux
           - os: ubuntu-latest
             preset: release
+            triplet: x64-linux
           - os: windows-latest
             preset: dev
+            triplet: x64-mingw-static
           - os: windows-latest
             preset: release
+            triplet: x64-mingw-static
           - os: macos-latest
             preset: dev
+            triplet: arm64-osx
           - os: macos-latest
             preset: release
+            triplet: arm64-osx
     runs-on: ${{ matrix.os }}
     env:
       VCPKG_ROOT: ${{ github.workspace }}/vcpkg
@@ -52,13 +58,17 @@ jobs:
           git -C "$env:VCPKG_ROOT" checkout 277978ad2eddc3b05ecf288dcd33071968cd2f79
           & "$env:VCPKG_ROOT/bootstrap-vcpkg.bat" -disableMetrics
 
+      - name: Install independent Python dependencies
+        if: matrix.os == 'ubuntu-latest' && matrix.preset == 'dev'
+        run: python3 -m pip install -r tools/requirements.txt
+
       - name: Configure
         if: matrix.preset == 'dev' && matrix.os == 'ubuntu-latest'
-        run: cmake --preset dev -DCPCP_ENABLE_REFERENCE_TESTS=ON
+        run: cmake --preset dev -DCPCP_ENABLE_REFERENCE_TESTS=ON -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
 
       - name: Configure
         if: matrix.preset != 'dev' || matrix.os != 'ubuntu-latest'
-        run: cmake --preset ${{ matrix.preset }}
+        run: cmake --preset ${{ matrix.preset }} -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}

@@ -1,5 +1,6 @@
 #include "storage/session_spool.hpp"
 
+#include "domain/compression.hpp"
 #include "domain/encoding.hpp"
 
 #include <algorithm>
@@ -133,7 +134,22 @@ domain::Result<void> SessionSpoolWriter::append(
     if (!file_ || !encoder_ || finalized_) {
         return std::unexpected(Error{ErrorCode::usage, "spool writer is not available"});
     }
-    auto frame = encoder_->push(type, plaintext);
+    Bytes payload(plaintext.begin(), plaintext.end());
+    if (type == RecordType::chunk_batch) {
+        const auto compressed = domain::compress_zstd(plaintext);
+        if (!compressed) {
+            return std::unexpected(compressed.error());
+        }
+        Bytes envelope{
+            std::byte{'C'}, std::byte{'P'}, std::byte{'Z'}, std::byte{'1'},
+        };
+        append_u32(envelope, static_cast<std::uint32_t>(plaintext.size()));
+        envelope.insert(envelope.end(), compressed->begin(), compressed->end());
+        if (envelope.size() < payload.size()) {
+            payload = std::move(envelope);
+        }
+    }
+    auto frame = encoder_->push(type, payload);
     if (!frame) {
         return std::unexpected(frame.error());
     }
@@ -308,8 +324,24 @@ domain::Result<std::optional<SpoolRecord>> SessionSpoolReader::next() {
         }
         done_ = true;
     }
+    Bytes decoded = std::move(plaintext).value();
+    if (decoded.size() >= 8 && decoded[0] == std::byte{'C'} && decoded[1] == std::byte{'P'}
+        && decoded[2] == std::byte{'Z'} && decoded[3] == std::byte{'1'}) {
+        const auto raw_length = decode_u32(std::span(decoded).subspan(4, 4));
+        if (raw_length > crypto::snapshot_frame_limit) {
+            return std::unexpected(Error{ErrorCode::integrity, "compressed spool record exceeds its bound"});
+        }
+        const auto decompressed = domain::decompress_zstd(
+            std::span(decoded).subspan(8),
+            raw_length
+        );
+        if (!decompressed) {
+            return std::unexpected(decompressed.error());
+        }
+        decoded = std::move(*decompressed);
+    }
     return std::optional<SpoolRecord>{
-        SpoolRecord{type, std::move(plaintext).value()},
+        SpoolRecord{type, std::move(decoded)},
     };
 }
 

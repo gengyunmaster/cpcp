@@ -615,6 +615,8 @@ domain::Result<void> SnapshotWriter::append_chunk_batch(const ChunkBatch& batch)
             {"id", crypto::to_hex(chunk.chunk_id)},
             {"plain", chunk.plaintext_length},
             {"stored", uint_string(chunk.stored_length)},
+            {"version", chunk.format_version},
+            {"encoding", chunk.content_encoding},
         });
     }
     return append(crypto::RecordType::chunk_batch, {

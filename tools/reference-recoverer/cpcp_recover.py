@@ -19,6 +19,7 @@ from nacl.bindings import (
     crypto_secretstream_xchacha20poly1305_state,
 )
 from nacl.pwhash import argon2id
+import zstandard as zstd
 
 
 class RecoverError(Exception):
@@ -412,6 +413,20 @@ class MainReader:
             if self.file.read(1):
                 integrity("snapshot has data after FINAL")
             self.done = True
+        if plaintext.startswith(b"CPZ1"):
+            if len(plaintext) < 8:
+                integrity("truncated compressed record")
+            raw_length = struct.unpack("<I", plaintext[4:8])[0]
+            if raw_length > 1024 * 1024:
+                integrity("compressed record exceeds the size limit")
+            try:
+                plaintext = zstd.ZstdDecompressor().decompress(
+                    plaintext[8:], max_output_size=raw_length
+                )
+            except zstd.ZstdError as error:
+                raise RecoverError(4, "invalid zstd record") from error
+            if len(plaintext) != raw_length:
+                integrity("decompressed record length mismatch")
         return record_type, plaintext
 
     def finish(self):
@@ -435,7 +450,7 @@ class FileIdentity:
         self.state.update(b"cpcp.file.v1" + u64(file_length) + u64(chunk_count))
 
     def append(self, descriptor):
-        chunk_id, plain_length, stored_length = descriptor
+        chunk_id, plain_length, _, _, _ = descriptor
         if plain_length == 0 or plain_length > self.chunk_size:
             integrity("invalid chunk length")
         if self.seen + 1 < self.chunk_count and plain_length != self.chunk_size:
@@ -458,34 +473,62 @@ def chunk_path(repository, chunk_id):
 
 
 def read_chunk(repository, repository_uuid, key, id_key, descriptor):
-    chunk_id, plain_length, stored_length = descriptor
+    chunk_id, plain_length, stored_length, format_version, encoding = descriptor
     path = chunk_path(repository, chunk_id)
     if not path.is_file() or path.is_symlink() or path.stat().st_size != stored_length:
         integrity("chunk metadata mismatch")
     with path.open("rb") as stream:
-        if read_exact(stream, 8) != b"CPCK\x01\x00\x00\x00":
+        prefix = read_exact(stream, 8)
+        if prefix[:4] != b"CPCK":
             integrity("invalid chunk envelope")
+        version, content_encoding = struct.unpack("<HH", prefix[4:])
+        if version != format_version or content_encoding != encoding or encoding > 1:
+            integrity("unsupported or inconsistent chunk envelope")
         if struct.unpack("<Q", read_exact(stream, 8))[0] != plain_length:
             integrity("chunk plaintext length mismatch")
+        encoded_length = plain_length
+        if version == 2:
+            encoded_length = struct.unpack("<Q", read_exact(stream, 8))[0]
+        if stored_length != (56 if version == 1 else 64) + encoded_length:
+            integrity("chunk encoded length mismatch")
         nonce = read_exact(stream, 24)
-        ciphertext = read_exact(stream, plain_length + 16)
+        ciphertext = read_exact(stream, encoded_length + 16)
         if stream.read(1):
             integrity("chunk has trailing data")
-    aad = (
-        b"cpcp.chunk.object.v1"
-        + repository_uuid
-        + chunk_id
-        + u64(plain_length)
-        + b"\x00\x00"
-    )
+    if version == 1:
+        aad = (
+            b"cpcp.chunk.object.v1"
+            + repository_uuid
+            + chunk_id
+            + u64(plain_length)
+            + b"\x00\x00"
+        )
+    else:
+        aad = (
+            b"cpcp.chunk.object.v2"
+            + repository_uuid
+            + chunk_id
+            + u64(plain_length)
+            + struct.pack("<H", encoding)
+            + u64(encoded_length)
+        )
     plaintext = xchacha_decrypt(key, nonce, aad, ciphertext)
+    if encoding == 1:
+        try:
+            plaintext = zstd.ZstdDecompressor().decompress(
+                plaintext, max_output_size=plain_length
+            )
+        except zstd.ZstdError as error:
+            raise RecoverError(4, "invalid zstd chunk") from error
+        if len(plaintext) != plain_length:
+            integrity("decompressed chunk length mismatch")
     if hmac_sha256(id_key, b"cpcp.chunk.v1" + u64(len(plaintext)) + plaintext) != chunk_id:
         integrity("chunk content ID mismatch")
     return plaintext
 
 
 def inspect_chunk(repository, descriptor):
-    chunk_id, _, stored_length = descriptor
+    chunk_id, _, stored_length, _, _ = descriptor
     path = chunk_path(repository, chunk_id)
     if not path.is_file() or path.is_symlink() or path.stat().st_size != stored_length:
         integrity("chunk metadata mismatch")
@@ -520,6 +563,8 @@ def validate_manifest(summary, snapshot_key, id_key, chunk_key, deep=False):
                     bytes.fromhex(item["id"]),
                     item["plain"],
                     int(item["stored"]),
+                    item.get("version", 1),
+                    item.get("encoding", 0),
                 )
                 identity.append(descriptor)
                 if deep:
@@ -607,6 +652,8 @@ def restore(summary, snapshot_key, id_key, chunk_key, destination):
                     bytes.fromhex(item["id"]),
                     item["plain"],
                     int(item["stored"]),
+                    item.get("version", 1),
+                    item.get("encoding", 0),
                 )
                 plaintext = read_chunk(summary["repository"], bytes.fromhex(summary["repository_uuid"]), chunk_key, id_key, descriptor)
                 identity.append(descriptor)

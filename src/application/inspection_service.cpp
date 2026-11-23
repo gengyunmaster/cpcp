@@ -158,6 +158,8 @@ domain::Result<std::uint64_t> verify_snapshot(
                     chunk.plaintext_length,
                     chunk.stored_length,
                     false,
+                    chunk.format_version,
+                    chunk.content_encoding,
                 };
                 if (deep) {
                     const auto validated = store.validate(metadata);
@@ -646,6 +648,8 @@ domain::Result<RestoreReport> restore_snapshot(
                     chunk.plaintext_length,
                     chunk.stored_length,
                     false,
+                    chunk.format_version,
+                    chunk.content_encoding,
                 };
                 auto plaintext = store->get(metadata);
                 if (!plaintext) {

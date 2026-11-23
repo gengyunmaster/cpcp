@@ -8,6 +8,7 @@ find_package(CLI11 CONFIG REQUIRED)
 find_package(Catch2 3 CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(unofficial-sodium CONFIG REQUIRED)
+find_package(zstd CONFIG REQUIRED)
 
 function(cpcp_enable_warnings target)
     if(MSVC)
@@ -25,12 +26,13 @@ function(cpcp_enable_warnings target)
 endfunction()
 
 add_library(cpcp_domain STATIC
+    src/domain/compression.cpp
     src/domain/encoding.cpp
     src/domain/strict_json.cpp
 )
 target_include_directories(cpcp_domain PUBLIC src)
 target_compile_features(cpcp_domain PUBLIC cxx_std_23)
-target_link_libraries(cpcp_domain PUBLIC nlohmann_json::nlohmann_json)
+target_link_libraries(cpcp_domain PUBLIC nlohmann_json::nlohmann_json zstd::libzstd)
 
 add_library(cpcp_platform STATIC
     src/platform/binary_file.cpp
@@ -76,6 +78,7 @@ add_library(cpcp_spool STATIC
 target_link_libraries(cpcp_spool PUBLIC
     cpcp_crypto
     cpcp_platform
+    zstd::libzstd
 )
 cpcp_enable_warnings(cpcp_spool)
 
@@ -94,6 +97,7 @@ target_link_libraries(cpcp_repository PUBLIC
     cpcp_crypto
     cpcp_platform
     cpcp_spool
+    zstd::libzstd
 )
 cpcp_enable_warnings(cpcp_repository)
 

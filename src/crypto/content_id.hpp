@@ -17,6 +17,8 @@ struct ChunkDescriptor {
     Digest chunk_id;
     std::uint32_t plaintext_length;
     std::uint64_t stored_length;
+    std::uint32_t format_version = 1;
+    std::uint16_t content_encoding = 0;
 };
 
 domain::Result<Digest> compute_hmac_sha256(

@@ -240,6 +240,8 @@ json chunks_json(const ChunkBatch& batch) {
             {"id", crypto::to_hex(chunk.chunk_id)},
             {"plain", chunk.plaintext_length},
             {"stored", std::to_string(chunk.stored_length)},
+            {"version", chunk.format_version},
+            {"encoding", chunk.content_encoding},
         });
     }
     return {
@@ -891,7 +893,13 @@ domain::Result<void> capture_file(
         if (!chunk) {
             return std::unexpected(chunk.error());
         }
-        const crypto::ChunkDescriptor descriptor{chunk->id, chunk->plaintext_length, chunk->stored_length};
+        const crypto::ChunkDescriptor descriptor{
+            chunk->id,
+            chunk->plaintext_length,
+            chunk->stored_length,
+            chunk->format_version,
+            chunk->content_encoding,
+        };
         const auto appended = active->identity.append(std::span(&descriptor, 1));
         if (!appended) {
             return std::unexpected(appended.error());

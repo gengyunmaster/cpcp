@@ -2,6 +2,7 @@
 
 #include "crypto/aead.hpp"
 #include "crypto/password.hpp"
+#include "domain/compression.hpp"
 #include "platform/binary_file.hpp"
 
 #include <sodium.h>
@@ -17,8 +18,6 @@ using domain::Error;
 using domain::ErrorCode;
 
 namespace {
-
-constexpr std::uint64_t envelope_overhead = 56;
 
 struct TemporaryCleanup {
     std::filesystem::path path;
@@ -45,6 +44,24 @@ Bytes chunk_aad(
     aad.insert(aad.end(), chunk.id.begin(), chunk.id.end());
     append_u64(aad, chunk.plaintext_length, 8);
     append_u64(aad, 0, 2);
+    return aad;
+}
+
+Bytes chunk_aad_v2(
+    const RepositoryConfig& config,
+    const ChunkMetadata& chunk,
+    std::uint64_t encoded_length
+) {
+    Bytes aad;
+    constexpr std::string_view domain = "cpcp.chunk.object.v2";
+    for (const char value : domain) {
+        aad.push_back(static_cast<std::byte>(static_cast<unsigned char>(value)));
+    }
+    aad.insert(aad.end(), config.repository_uuid.begin(), config.repository_uuid.end());
+    aad.insert(aad.end(), chunk.id.begin(), chunk.id.end());
+    append_u64(aad, chunk.plaintext_length, 8);
+    append_u64(aad, chunk.content_encoding, 2);
+    append_u64(aad, encoded_length, 8);
     return aad;
 }
 
@@ -105,7 +122,7 @@ bool ChunkStore::historical_evidence(const ChunkMetadata& chunk) {
     if (base_evidence_.contains(key)) {
         return true;
     }
-    return validation_cache_ && validation_cache_->contains(chunk.id, chunk.stored_length, 1);
+    return validation_cache_ && validation_cache_->contains(chunk.id, chunk.stored_length, chunk.format_version);
 }
 
 std::vector<ValidatedObject> ChunkStore::validated_objects() const {
@@ -115,7 +132,7 @@ std::vector<ValidatedObject> ChunkStore::validated_objects() const {
             result.push_back(ValidatedObject{
                 domain::hex_decode<32>(hex).value(),
                 check.stored_length,
-                1,
+                check.format_version,
             });
         }
     }
@@ -142,7 +159,7 @@ domain::Result<void> ChunkStore::check_metadata(const ChunkMetadata& chunk) {
     if (error || size != chunk.stored_length) {
         return std::unexpected(Error{ErrorCode::integrity, "chunk stored length mismatch"});
     }
-    checks_.emplace(key, CachedCheck{chunk.stored_length, false});
+    checks_.emplace(key, CachedCheck{chunk.stored_length, chunk.format_version, chunk.content_encoding, false});
     return {};
 }
 
@@ -160,12 +177,15 @@ domain::Result<crypto::Bytes> ChunkStore::read_and_validate(
     if (!result) {
         return std::unexpected(result.error());
     }
-    const std::array<std::byte, 8> expected{
-        std::byte{'C'}, std::byte{'P'}, std::byte{'C'}, std::byte{'K'},
-        std::byte{1}, std::byte{0}, std::byte{0}, std::byte{0},
-    };
-    if (prefix != expected) {
+    if (prefix[0] != std::byte{'C'} || prefix[1] != std::byte{'P'}
+        || prefix[2] != std::byte{'C'} || prefix[3] != std::byte{'K'}) {
         return std::unexpected(Error{ErrorCode::integrity, "invalid chunk envelope"});
+    }
+    const auto version = domain::read_le(std::span(prefix).subspan(4, 2), 2).value();
+    const auto encoding = static_cast<std::uint16_t>(domain::read_le(std::span(prefix).subspan(6, 2), 2).value());
+    if ((version != 1 && version != 2) || version != chunk.format_version
+        || encoding != chunk.content_encoding || encoding > 1) {
+        return std::unexpected(Error{ErrorCode::integrity, "unsupported or inconsistent chunk envelope"});
     }
     std::array<std::byte, 8> length_bytes{};
     result = file->read_exact(length_bytes);
@@ -176,13 +196,26 @@ domain::Result<crypto::Bytes> ChunkStore::read_and_validate(
     if (!length || *length != chunk.plaintext_length) {
         return std::unexpected(Error{ErrorCode::integrity, "chunk plaintext length mismatch"});
     }
+    std::uint64_t encoded_length = length.value();
+    if (version == 2) {
+        result = file->read_exact(length_bytes);
+        if (!result) {
+            return std::unexpected(result.error());
+        }
+        encoded_length = domain::read_le(length_bytes, 8).value();
+    }
+    if (encoded_length > static_cast<std::uint64_t>(config_.chunk_size)
+            + config_.chunk_size / 8 + 1024
+        || chunk.stored_length != (version == 1 ? 56 + encoded_length : 64 + encoded_length)) {
+        return std::unexpected(Error{ErrorCode::integrity, "chunk encoded length mismatch"});
+    }
 
     crypto::SealedObject object;
     result = file->read_exact(object.nonce);
     if (!result) {
         return std::unexpected(result.error());
     }
-    object.ciphertext.resize(chunk.plaintext_length + crypto_aead_xchacha20poly1305_ietf_ABYTES);
+    object.ciphertext.resize(encoded_length + crypto_aead_xchacha20poly1305_ietf_ABYTES);
     result = file->read_exact(object.ciphertext);
     if (!result) {
         return std::unexpected(result.error());
@@ -196,10 +229,21 @@ domain::Result<crypto::Bytes> ChunkStore::read_and_validate(
         return std::unexpected(Error{ErrorCode::integrity, "chunk has trailing data"});
     }
 
-    const auto aad = chunk_aad(config_, chunk);
+    const auto aad = version == 1
+        ? chunk_aad(config_, chunk)
+        : chunk_aad_v2(config_, chunk, encoded_length);
     auto plaintext = crypto::open_object(encryption_key_, aad, object);
     if (!plaintext) {
         return std::unexpected(plaintext.error());
+    }
+    if (encoding == 1) {
+        auto decompressed = domain::decompress_zstd(*plaintext, chunk.plaintext_length);
+        if (!decompressed) {
+            return std::unexpected(decompressed.error());
+        }
+        plaintext = std::move(*decompressed);
+    } else if (encoded_length != chunk.plaintext_length) {
+        return std::unexpected(Error{ErrorCode::integrity, "uncompressed chunk length mismatch"});
     }
     const auto actual_id = crypto::compute_chunk_id(id_key_, *plaintext);
     if (!actual_id || *actual_id != chunk.id) {
@@ -237,6 +281,8 @@ domain::Result<ChunkMetadata> ChunkStore::reuse(const crypto::ChunkDescriptor& d
         descriptor.plaintext_length,
         descriptor.stored_length,
         true,
+        descriptor.format_version,
+        descriptor.content_encoding,
     };
     const auto metadata = check_metadata(chunk);
     if (!metadata) {
@@ -278,26 +324,62 @@ domain::Result<ChunkMetadata> ChunkStore::put(std::span<const std::byte> plainte
     if (plaintext.empty() || plaintext.size() > config_.chunk_size) {
         return std::unexpected(Error{ErrorCode::usage, "chunk plaintext length is invalid"});
     }
-
     const auto id = crypto::compute_chunk_id(id_key_, plaintext);
     if (!id) {
         return std::unexpected(id.error());
     }
-    ChunkMetadata chunk{
-        *id,
-        static_cast<std::uint32_t>(plaintext.size()),
-        static_cast<std::uint64_t>(plaintext.size()) + envelope_overhead,
-        false,
-    };
     const auto key = crypto::to_hex(*id);
     const auto cached = checks_.find(key);
     if (cached != checks_.end() && cached->second.current_validated) {
-        chunk.already_present = true;
-        return chunk;
+        return ChunkMetadata{
+            *id,
+            static_cast<std::uint32_t>(plaintext.size()),
+            cached->second.stored_length,
+            true,
+            cached->second.format_version,
+            cached->second.content_encoding,
+        };
     }
 
+    ChunkMetadata chunk{
+        *id,
+        static_cast<std::uint32_t>(plaintext.size()),
+        0,
+        false,
+        2,
+        0,
+    };
     const auto final_path = chunk_path(*id);
     if (std::filesystem::exists(final_path)) {
+        auto existing = platform::BinaryFile::open_read(final_path);
+        if (!existing) {
+            return std::unexpected(existing.error());
+        }
+        std::array<std::byte, 8> prefix{};
+        auto read = existing->read_exact(prefix);
+        if (!read) {
+            return std::unexpected(read.error());
+        }
+        const auto version = domain::read_le(std::span(prefix).subspan(4, 2), 2).value();
+        chunk.format_version = static_cast<std::uint32_t>(version);
+        chunk.content_encoding = static_cast<std::uint16_t>(domain::read_le(std::span(prefix).subspan(6, 2), 2).value());
+        std::array<std::byte, 8> length_bytes{};
+        read = existing->read_exact(length_bytes);
+        if (!read) {
+            return std::unexpected(read.error());
+        }
+        if (domain::read_le(length_bytes, 8).value() != chunk.plaintext_length) {
+            return std::unexpected(Error{ErrorCode::integrity, "existing chunk plaintext length mismatch"});
+        }
+        std::uint64_t encoded_length = chunk.plaintext_length;
+        if (version == 2) {
+            read = existing->read_exact(length_bytes);
+            if (!read) {
+                return std::unexpected(read.error());
+            }
+            encoded_length = domain::read_le(length_bytes, 8).value();
+        }
+        chunk.stored_length = (version == 1 ? 56 : 64) + encoded_length;
         auto metadata = check_metadata(chunk);
         if (!metadata) {
             return std::unexpected(metadata.error());
@@ -314,6 +396,16 @@ domain::Result<ChunkMetadata> ChunkStore::put(std::span<const std::byte> plainte
         return chunk;
     }
 
+    Bytes encoded(plaintext.begin(), plaintext.end());
+    auto compressed = domain::compress_zstd(plaintext);
+    if (!compressed) {
+        return std::unexpected(compressed.error());
+    }
+    if (compressed->size() < encoded.size()) {
+        encoded = std::move(*compressed);
+        chunk.content_encoding = 1;
+    }
+    chunk.stored_length = encoded.size() + 64;
     const auto temporary = repository_ / "tmp"
         / (domain::hex_encode(crypto::random_uuid()) + ".part");
     std::error_code directory_error;
@@ -324,8 +416,8 @@ domain::Result<ChunkMetadata> ChunkStore::put(std::span<const std::byte> plainte
     }
     TemporaryCleanup cleanup{temporary};
 
-    const auto aad = chunk_aad(config_, chunk);
-    auto sealed = crypto::seal_object(encryption_key_, aad, plaintext);
+    const auto aad = chunk_aad_v2(config_, chunk, encoded.size());
+    auto sealed = crypto::seal_object(encryption_key_, aad, encoded);
     if (!sealed) {
         return std::unexpected(sealed.error());
     }
@@ -335,7 +427,9 @@ domain::Result<ChunkMetadata> ChunkStore::put(std::span<const std::byte> plainte
     }
     const Bytes prefix{
         std::byte{'C'}, std::byte{'P'}, std::byte{'C'}, std::byte{'K'},
-        std::byte{1}, std::byte{0}, std::byte{0}, std::byte{0},
+        std::byte{2}, std::byte{0},
+        static_cast<std::byte>(chunk.content_encoding & 0xffU),
+        static_cast<std::byte>(chunk.content_encoding >> 8U),
     };
     auto result = file->write_all(prefix);
     if (!result) {
@@ -343,6 +437,12 @@ domain::Result<ChunkMetadata> ChunkStore::put(std::span<const std::byte> plainte
     }
     Bytes length;
     append_u64(length, chunk.plaintext_length, 8);
+    result = file->write_all(length);
+    if (!result) {
+        return std::unexpected(result.error());
+    }
+    length.clear();
+    append_u64(length, encoded.size(), 8);
     result = file->write_all(length);
     if (!result) {
         return std::unexpected(result.error());
@@ -391,7 +491,7 @@ domain::Result<ChunkMetadata> ChunkStore::put(std::span<const std::byte> plainte
         }
         current = current.parent_path();
     }
-    checks_[key] = CachedCheck{chunk.stored_length, true, true};
+    checks_[key] = CachedCheck{chunk.stored_length, chunk.format_version, chunk.content_encoding, true, true};
     return chunk;
 }
 

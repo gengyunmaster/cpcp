@@ -117,6 +117,8 @@ TEST_CASE("backup creates and reuses snapshots with deduplication") {
                     chunk.plaintext_length,
                     chunk.stored_length,
                     false,
+                    chunk.format_version,
+                    chunk.content_encoding,
                 }).value();
                 if (plaintext == std::vector<std::byte>{std::byte{'w'}, std::byte{'o'}, std::byte{'r'}, std::byte{'l'}, std::byte{'d'}}) {
                     restored["sub/b.txt"].insert(restored["sub/b.txt"].end(), plaintext.begin(), plaintext.end());

@@ -87,6 +87,27 @@ TEST_CASE("encrypted session spool round trips bounded records") {
     REQUIRE_FALSE(reader.next().value().has_value());
 }
 
+TEST_CASE("session spool authenticates compressed chunk batches") {
+    TestDirectory directory("spool-zstd");
+    const auto path = directory.path() / "session.spool";
+    const auto key = test_key();
+    const auto session = context();
+    const Bytes plaintext = bytes(std::string(10000, 'a'));
+    SessionSpoolWriter writer;
+    REQUIRE(writer.create(path, key, session));
+    REQUIRE(writer.append(RecordType::chunk_batch, plaintext));
+    REQUIRE(writer.finalize(bytes("complete")));
+    REQUIRE(std::filesystem::file_size(path) < plaintext.size());
+
+    SessionSpoolReader reader;
+    REQUIRE(reader.open(path, key, session));
+    const auto record = reader.next().value();
+    REQUIRE(record->type == RecordType::chunk_batch);
+    REQUIRE(record->plaintext == plaintext);
+    REQUIRE(reader.next().value()->type == RecordType::final_summary);
+    REQUIRE(reader.finish());
+}
+
 TEST_CASE("session spool does not expose plaintext paths on disk") {
     TestDirectory directory("spool-confidentiality");
     const auto path = directory.path() / "session.spool";

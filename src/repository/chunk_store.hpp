@@ -19,6 +19,8 @@ struct ChunkMetadata {
     std::uint32_t plaintext_length;
     std::uint64_t stored_length;
     bool already_present;
+    std::uint32_t format_version = 1;
+    std::uint16_t content_encoding = 0;
 };
 
 class ChunkStore {
@@ -42,6 +44,8 @@ public:
 private:
     struct CachedCheck {
         std::uint64_t stored_length;
+        std::uint32_t format_version = 1;
+        std::uint16_t content_encoding = 0;
         bool validated = false;
         bool current_validated = false;
     };

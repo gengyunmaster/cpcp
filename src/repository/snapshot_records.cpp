@@ -205,6 +205,8 @@ domain::Result<ChunkBatch> parse_chunk_batch(const storage::SpoolRecord& record)
                 require_hex<32>(chunk, "id"),
                 static_cast<std::uint32_t>(require_uint(chunk, "plain")),
                 require_uint_string(chunk, "stored"),
+                chunk.contains("version") ? static_cast<std::uint32_t>(require_uint(chunk, "version")) : 1,
+                static_cast<std::uint16_t>(chunk.contains("encoding") ? require_uint(chunk, "encoding") : 0),
             });
         }
         return batch;

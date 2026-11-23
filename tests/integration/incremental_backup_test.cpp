@@ -91,7 +91,7 @@ TEST_CASE("repository statistics distinguish stored and allocated bytes") {
     REQUIRE(stats.latest_generation == 1);
     REQUIRE(stats.logical_bytes == 5);
     REQUIRE(stats.chunk_objects == 1);
-    REQUIRE(stats.chunk_stored_bytes == 61);
+    REQUIRE(stats.chunk_stored_bytes == 69);
     REQUIRE(stats.chunk_allocated_bytes >= stats.chunk_stored_bytes);
     REQUIRE(stats.snapshot_main_bytes > 0);
     REQUIRE(stats.snapshot_summary_bytes > 0);

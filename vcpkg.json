@@ -8,6 +8,7 @@
     "catch2",
     "cli11",
     "libsodium",
-    "nlohmann-json"
+    "nlohmann-json",
+    "zstd"
   ]
 }

@@ -92,6 +92,24 @@ TEST_CASE("chunk writes deduplicate and decrypt correctly") {
     REQUIRE(std::filesystem::exists(chunk_path(repo, first)));
 }
 
+TEST_CASE("compressible chunks use authenticated zstd envelopes") {
+    auto repo = fixture("chunk-zstd");
+    auto store = ChunkStore::create(repo.path, repo.config, repo.master).value();
+    const std::vector<std::byte> data(1024 * 1024, std::byte{'x'});
+    const auto chunk = store.put(data).value();
+    REQUIRE(chunk.format_version == 2);
+    REQUIRE(chunk.content_encoding == 1);
+    REQUIRE(chunk.stored_length < data.size());
+    REQUIRE(store.get(chunk).value() == data);
+    REQUIRE(store.reuse(cpcp::crypto::ChunkDescriptor{
+        chunk.id,
+        chunk.plaintext_length,
+        chunk.stored_length,
+        chunk.format_version,
+        chunk.content_encoding,
+    }));
+}
+
 TEST_CASE("chunk tampering is detected without prior evidence") {
     auto repo = fixture("chunk-tamper");
     auto store = ChunkStore::create(repo.path, repo.config, repo.master).value();

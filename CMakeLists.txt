@@ -97,6 +97,7 @@ cpcp_enable_warnings(cpcp_repository)
 
 add_library(cpcp_application STATIC
     src/application/backup_service.cpp
+    src/application/check_service.cpp
     src/application/credentials.cpp
     src/application/inspection_service.cpp
     src/application/recovery_service.cpp
@@ -171,6 +172,7 @@ if(BUILD_TESTING)
     add_executable(cpcp_backup_tests
         tests/integration/backup_service_test.cpp
         tests/integration/browse_service_test.cpp
+        tests/integration/check_service_test.cpp
     )
     target_link_libraries(cpcp_backup_tests PRIVATE
         cpcp_application
@@ -256,6 +258,14 @@ if(BUILD_TESTING)
             -DCPCP_EXECUTABLE=$<TARGET_FILE:cpcp>
             -DCPCP_PROBE_DIR=${CMAKE_CURRENT_BINARY_DIR}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/snapshot_browse_cli.cmake
+    )
+
+    add_test(
+        NAME check_cli
+        COMMAND ${CMAKE_COMMAND}
+            -DCPCP_EXECUTABLE=$<TARGET_FILE:cpcp>
+            -DCPCP_PROBE_DIR=${CMAKE_CURRENT_BINARY_DIR}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/check_cli.cmake
     )
 
     add_test(

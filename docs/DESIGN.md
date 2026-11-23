@@ -715,7 +715,7 @@ Recursive comparison uses the union of source and snapshot entries so that added
 
 Content checks use the same second-level file ID as backup and restore. A bounded disk-backed descriptor spool may be used for large files; no whole-file or whole-tree report DOM is required. Disposable path indexes use externally sorted fixed-size records keyed by HMAC over the root UUID and relative path; they contain comparison metadata but no plaintext paths. Added, missing, type-changed, unreadable, unsupported, unknown, or policy-skipped entries produce exit code 3 when they are part of the requested comparison.
 
-The human output and JSON report must state the selected snapshot, its complete or partial status, root mapping, and exact verification scope. A metadata match must never be displayed as proof of a safe or restorable backup.
+The human output and JSON report must state the selected snapshot, its complete or partial status, root mapping, and exact verification scope. A metadata match must never be displayed as proof of a safe or restorable backup. In the initial implementation, `--content --verify-repo` validates every chunk referenced by the selected snapshot before scanning the source, which is stronger than validating only matched files; its report includes the selected snapshot's chunk-reference count. Disposable comparison indexes are created outside the repository so read-only checks never create, remove, or timestamp repository files or directories.
 
 `--full` is avoided as a mode name because it is ambiguous about whether source content, repository objects, or both were checked.
 

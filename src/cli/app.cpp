@@ -109,6 +109,27 @@ int run(int argc, char** argv) {
         );
     });
 
+    auto* check = backup->add_subcommand("check", "Compare a source tree with a snapshot");
+    CheckCommandOptions check_options;
+    std::string check_selector = "latest";
+    std::string check_root;
+    check->add_option("source", check_options.check.source, "Source directory or explicitly mapped restored tree")
+        ->required();
+    check->add_option("--repo", check_options.repository)->default_val(check_options.repository);
+    check->add_option("--snapshot", check_selector, "Snapshot generation, latest, or latest-complete")
+        ->default_val(check_selector);
+    check->add_option("--root", check_root, "Root selector: index:<n> or label:<name>");
+    check->add_option("--path", check_options.check.path, "Limit comparison to a root-relative path");
+    check->add_flag("--content", check_options.check.content, "Compare source content identities");
+    check->add_flag("--verify-repo", check_options.check.verify_repo, "Validate referenced repository chunks");
+    check->add_flag("--repo-read-only", check_options.check.repo_read_only, "Read the repository without locks or writes");
+    add_password_options(check);
+    check->add_flag("--ndjson", check_options.ndjson, "Stream newline-delimited JSON results");
+    check->callback([&] {
+        check_options.config = config_options;
+        command_result = run_backup_check_command(check_selector, check_root, check_options);
+    });
+
     auto* snapshot = app.add_subcommand("snapshot", "Snapshot operations");
     snapshot->require_subcommand(1);
     InspectionCommandOptions inspection_options;

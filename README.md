@@ -13,6 +13,7 @@ The current implementation provides authenticated repository configuration, encr
 - Second-level file identities and streaming continuation records
 - Encrypted snapshot streams, authenticated summaries, and bounded external chunk-set commitments
 - Deduplicated `backup add` with source mutation detection and unsupported-entry policies
+- `backup check` with added/missing/type-changed detection, content identities, and repository validation
 - `snapshot list`, `show`, authenticated `ls` / `find`, and full or selective `restore`
 - Bounded JSON and streaming NDJSON snapshot-entry reports
 - Structural and deep `repo verify`

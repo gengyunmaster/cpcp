@@ -35,6 +35,9 @@ std::uint64_t elapsed_ns(Clock::time_point start) {
 }
 
 std::string filesystem_name(const std::filesystem::path& path) {
+#ifdef _WIN32
+    static_cast<void>(path);
+#endif
 #if defined(__linux__)
     struct statfs status {};
     if (statfs(path.c_str(), &status) != 0) {

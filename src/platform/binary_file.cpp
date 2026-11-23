@@ -28,9 +28,11 @@ using domain::ErrorCode;
 
 namespace {
 
+#ifndef _WIN32
 std::string native_error(int error) {
     return std::generic_category().message(error);
 }
+#endif
 
 domain::Result<void> close_native(std::intptr_t handle) {
 #ifdef _WIN32
@@ -248,6 +250,7 @@ domain::Result<void> BinaryFile::close() {
 
 domain::Result<void> sync_directory(const std::filesystem::path& path) {
 #ifdef _WIN32
+    static_cast<void>(path);
     return std::unexpected(Error{
         ErrorCode::unsupported,
         "directory synchronization is not yet implemented on Windows",

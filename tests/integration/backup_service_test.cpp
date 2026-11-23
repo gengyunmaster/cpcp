@@ -221,4 +221,31 @@ TEST_CASE("partial snapshots authenticate failures and require explicit restore 
     REQUIRE(cpcp::application::verify_repository(repository, password(), {}));
 }
 
+TEST_CASE("an explicit older base preserves lineage and allocates the global next generation") {
+    TestDirectory fixture("backup-explicit-base");
+    const auto repository = fixture.path() / "repo";
+    const auto source = fixture.path() / "source";
+    write_file(source / "a.txt", "first");
+    cpcp::repository::ConfigOptions config;
+    config.kdf = {8192, 1};
+    config.chunk_size = 1024 * 1024;
+    REQUIRE(cpcp::application::initialize_repository(repository, password(), config));
+    const auto first = cpcp::application::backup_add(repository, password(), {source}, {}).value();
+    write_file(source / "a.txt", "second");
+    const auto second = cpcp::application::backup_add(repository, password(), {source}, {}).value();
+
+    cpcp::application::BackupOptions options;
+    options.base_generation = first.snapshot.context.generation;
+    const auto third = cpcp::application::backup_add(repository, password(), {source}, options).value();
+    REQUIRE(third.snapshot.context.generation == second.snapshot.context.generation + 1);
+    REQUIRE(third.snapshot.has_parent);
+    REQUIRE(third.snapshot.parent_uuid == first.snapshot.context.snapshot_uuid);
+    REQUIRE(third.snapshot.context.lineage_uuid == first.snapshot.context.lineage_uuid);
+
+    options.no_parent = true;
+    const auto conflicting = cpcp::application::backup_add(repository, password(), {source}, options);
+    REQUIRE_FALSE(conflicting);
+    REQUIRE(conflicting.error().code == cpcp::domain::ErrorCode::usage);
+}
+
 }

@@ -1371,6 +1371,9 @@ domain::Result<BackupReport> backup_add(
     if (roots.empty()) {
         return std::unexpected(Error{ErrorCode::usage, "at least one source root is required"});
     }
+    if (options.no_parent && options.base_generation) {
+        return std::unexpected(Error{ErrorCode::usage, "--base and --no-parent are mutually exclusive"});
+    }
     auto unlocked = repository::load_config(repository, password);
     if (!unlocked) {
         return std::unexpected(unlocked.error());
@@ -1384,7 +1387,15 @@ domain::Result<BackupReport> backup_add(
         return std::unexpected(summaries.error());
     }
     std::optional<repository::SnapshotSummary> parent;
-    if (!options.no_parent && !summaries->empty()) {
+    if (!options.no_parent && options.base_generation) {
+        const auto selected = std::ranges::find_if(*summaries, [&](const repository::SnapshotSummary& summary) {
+            return summary.context.generation == *options.base_generation;
+        });
+        if (selected == summaries->end()) {
+            return std::unexpected(Error{ErrorCode::permanent_io, "base snapshot generation was not found"});
+        }
+        parent = *selected;
+    } else if (!options.no_parent && !summaries->empty()) {
         parent = summaries->back();
     }
     SessionSpec spec;

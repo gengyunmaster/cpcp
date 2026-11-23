@@ -14,6 +14,7 @@ struct BackupOptions {
     bool full_source_read = false;
     bool cross_file_systems = false;
     bool no_parent = false;
+    std::optional<std::uint64_t> base_generation;
     bool allow_partial = false;
     bool unsupported_fail = false;
     std::uint64_t interrupt_after_chunks_for_testing = 0;

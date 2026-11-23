@@ -34,6 +34,7 @@ target_link_libraries(cpcp_domain PUBLIC nlohmann_json::nlohmann_json)
 
 add_library(cpcp_platform STATIC
     src/platform/binary_file.cpp
+    src/platform/lock.cpp
 )
 target_link_libraries(cpcp_platform PUBLIC cpcp_domain)
 target_compile_definitions(cpcp_platform INTERFACE
@@ -78,6 +79,7 @@ target_link_libraries(cpcp_spool PUBLIC
 cpcp_enable_warnings(cpcp_spool)
 
 add_library(cpcp_repository STATIC
+    src/repository/chunk_store.cpp
     src/repository/config.cpp
     src/repository/config_io.cpp
 )
@@ -117,6 +119,7 @@ cpcp_enable_warnings(cpcp)
 if(BUILD_TESTING)
     add_executable(cpcp_unit_tests
         tests/unit/aead_test.cpp
+        tests/unit/chunk_store_test.cpp
         tests/unit/config_test.cpp
         tests/unit/content_id_test.cpp
         tests/unit/file_identity_test.cpp

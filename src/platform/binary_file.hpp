@@ -9,6 +9,15 @@
 
 namespace cpcp::platform {
 
+struct FileMetadata {
+    std::uint64_t size = 0;
+    std::int64_t mtime_seconds = 0;
+    std::uint32_t mtime_nanoseconds = 0;
+    std::uint64_t device = 0;
+    std::uint64_t inode = 0;
+    std::uint32_t mode = 0;
+};
+
 class BinaryFile {
 public:
     static domain::Result<BinaryFile> create_new(const std::filesystem::path& path);
@@ -25,6 +34,7 @@ public:
     domain::Result<void> read_exact(std::span<std::byte> output);
     domain::Result<void> flush();
     domain::Result<void> close();
+    domain::Result<FileMetadata> metadata() const;
     bool is_open() const;
 
 private:

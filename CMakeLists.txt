@@ -94,14 +94,19 @@ target_link_libraries(cpcp_repository PUBLIC
 cpcp_enable_warnings(cpcp_repository)
 
 add_library(cpcp_application STATIC
+    src/application/backup_service.cpp
     src/application/credentials.cpp
     src/application/repository_service.cpp
 )
-target_link_libraries(cpcp_application PUBLIC cpcp_repository)
+target_link_libraries(cpcp_application PUBLIC
+    cpcp_repository
+    cpcp_probe
+)
 cpcp_enable_warnings(cpcp_application)
 
 add_library(cpcp_cli STATIC
     src/cli/app.cpp
+    src/cli/backup_command.cpp
     src/cli/config_command.cpp
     src/cli/errors.cpp
     src/cli/probe_command.cpp
@@ -138,6 +143,15 @@ if(BUILD_TESTING)
     )
     cpcp_enable_warnings(cpcp_unit_tests)
 
+    add_executable(cpcp_backup_tests
+        tests/integration/backup_service_test.cpp
+    )
+    target_link_libraries(cpcp_backup_tests PRIVATE
+        cpcp_application
+        Catch2::Catch2WithMain
+    )
+    cpcp_enable_warnings(cpcp_backup_tests)
+
     add_executable(cpcp_spool_tests
         tests/integration/session_spool_test.cpp
     )
@@ -168,6 +182,7 @@ if(BUILD_TESTING)
 
     include(Catch)
     catch_discover_tests(cpcp_unit_tests)
+    catch_discover_tests(cpcp_backup_tests)
     catch_discover_tests(cpcp_spool_tests)
     catch_discover_tests(cpcp_native_file_tests)
     catch_discover_tests(cpcp_simulation_tests)
@@ -178,6 +193,14 @@ if(BUILD_TESTING)
             -DCPCP_EXECUTABLE=$<TARGET_FILE:cpcp>
             -DCPCP_PROBE_DIR=${CMAKE_CURRENT_BINARY_DIR}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/cli_contract.cmake
+    )
+
+    add_test(
+        NAME backup_cli
+        COMMAND ${CMAKE_COMMAND}
+            -DCPCP_EXECUTABLE=$<TARGET_FILE:cpcp>
+            -DCPCP_PROBE_DIR=${CMAKE_CURRENT_BINARY_DIR}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/backup_cli.cmake
     )
 
     add_test(

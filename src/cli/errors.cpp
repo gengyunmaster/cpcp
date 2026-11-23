@@ -19,6 +19,7 @@ int exit_code(domain::ErrorCode code) {
     case ErrorCode::permanent_io:
     case ErrorCode::unsupported:
     case ErrorCode::source_changed:
+        return 3;
     case ErrorCode::conflict:
     case ErrorCode::lock_busy:
     case ErrorCode::internal:

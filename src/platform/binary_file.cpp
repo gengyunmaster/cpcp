@@ -248,6 +248,58 @@ domain::Result<void> BinaryFile::close() {
     return close_native(handle);
 }
 
+domain::Result<FileMetadata> BinaryFile::metadata() const {
+    FileMetadata metadata;
+#ifdef _WIN32
+    LARGE_INTEGER size{};
+    if (!GetFileSizeEx(reinterpret_cast<HANDLE>(handle_), &size)) {
+        return std::unexpected(Error{ErrorCode::permanent_io, "GetFileSizeEx failed"});
+    }
+    FILE_BASIC_INFO info{};
+    if (!GetFileInformationByHandleEx(
+            reinterpret_cast<HANDLE>(handle_),
+            FileBasicInfo,
+            &info,
+            sizeof(info)
+        )) {
+        return std::unexpected(Error{ErrorCode::permanent_io, "GetFileInformationByHandleEx failed"});
+    }
+    metadata.size = static_cast<std::uint64_t>(size.QuadPart);
+    ULARGE_INTEGER ticks;
+    ticks.LowPart = info.LastWriteTime.dwLowDateTime;
+    ticks.HighPart = info.LastWriteTime.dwHighDateTime;
+    constexpr std::uint64_t epoch_seconds = 11644473600ULL;
+    constexpr std::uint64_t ticks_per_second = 10000000ULL;
+    const auto seconds = ticks.QuadPart / ticks_per_second;
+    metadata.mtime_seconds = static_cast<std::int64_t>(seconds - epoch_seconds);
+    metadata.mtime_nanoseconds = static_cast<std::uint32_t>(
+        (ticks.QuadPart % ticks_per_second) * 100
+    );
+    metadata.device = info.VolumeSerialNumber;
+    metadata.inode = static_cast<std::uint64_t>(info.FileIndex.HighPart) << 32
+        | info.FileIndex.LowPart;
+    metadata.mode = (info.FileAttributes & FILE_ATTRIBUTE_READONLY) ? 0444 : 0666;
+    return metadata;
+#else
+    struct stat status {};
+    if (fstat(static_cast<int>(handle_), &status) != 0) {
+        return std::unexpected(Error{ErrorCode::permanent_io, native_error(errno)});
+    }
+    metadata.size = static_cast<std::uint64_t>(status.st_size);
+#ifdef __APPLE__
+    metadata.mtime_seconds = status.st_mtimespec.tv_sec;
+    metadata.mtime_nanoseconds = static_cast<std::uint32_t>(status.st_mtimespec.tv_nsec);
+#else
+    metadata.mtime_seconds = status.st_mtim.tv_sec;
+    metadata.mtime_nanoseconds = static_cast<std::uint32_t>(status.st_mtim.tv_nsec);
+#endif
+    metadata.device = status.st_dev;
+    metadata.inode = status.st_ino;
+    metadata.mode = static_cast<std::uint32_t>(status.st_mode & 07777);
+    return metadata;
+#endif
+}
+
 domain::Result<void> sync_directory(const std::filesystem::path& path) {
 #ifdef _WIN32
     static_cast<void>(path);

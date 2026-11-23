@@ -1,6 +1,7 @@
 #include "cli/app.hpp"
 
 #include "cli/config_command.hpp"
+#include "cli/backup_command.hpp"
 #include "cli/probe_command.hpp"
 
 #include <CLI/CLI.hpp>
@@ -69,6 +70,26 @@ int run(int argc, char** argv) {
             import_path,
             import_repository,
             config_options
+        );
+    });
+
+    auto* backup = app.add_subcommand("backup", "Backup operations");
+    backup->require_subcommand(1);
+    auto* add = backup->add_subcommand("add", "Add source trees to a snapshot");
+    std::vector<std::filesystem::path> backup_roots;
+    std::filesystem::path backup_repository = ".";
+    application::BackupOptions backup_options;
+    add->add_option("paths", backup_roots, "Source root directories")->required()->expected(-1);
+    add->add_option("--repo", backup_repository)->default_val(backup_repository);
+    add->add_flag("--revalidate-all", backup_options.revalidate_all, "Revalidate every referenced chunk");
+    add->add_flag("--full-source-read", backup_options.full_source_read, "Read every source byte");
+    add->add_flag("--cross-file-systems", backup_options.cross_file_systems, "Allow mounted filesystem traversal");
+    add->add_flag("--no-parent", backup_options.no_parent, "Start a new snapshot lineage");
+    add_password_options(add);
+    add->callback([&] {
+        command_result = run_backup_add_command(
+            backup_roots,
+            BackupCommandOptions{backup_repository, backup_options, config_options}
         );
     });
 

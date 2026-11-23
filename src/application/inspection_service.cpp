@@ -15,6 +15,10 @@
 #include <system_error>
 #include <vector>
 
+#ifndef _WIN32
+#include <sys/stat.h>
+#endif
+
 namespace cpcp::application {
 
 using domain::Error;
@@ -310,6 +314,94 @@ domain::Result<void> apply_metadata(
     return {};
 }
 
+}
+
+domain::Result<RepositoryStats> repository_statistics(
+    const std::filesystem::path& repository,
+    const crypto::SecretBytes& password
+) {
+    const auto locks = platform::RepositoryLocks::read(repository);
+    if (!locks) {
+        return std::unexpected(locks.error());
+    }
+    const auto unlocked = repository::load_config(repository, password);
+    if (!unlocked) {
+        return std::unexpected(unlocked.error());
+    }
+    const auto summaries = repository::list_snapshots(repository, unlocked->config, unlocked->master_key);
+    if (!summaries) {
+        return std::unexpected(summaries.error());
+    }
+    RepositoryStats report;
+    report.snapshots = summaries->size();
+    if (!summaries->empty()) {
+        report.latest_generation = summaries->back().context.generation;
+    }
+    for (const auto& summary : *summaries) {
+        report.logical_bytes += summary.stats.logical_bytes;
+    }
+    const auto scan = [&](const std::string& directory, const std::string& extension, std::uint64_t& files, std::uint64_t& stored, std::uint64_t& allocated) -> domain::Result<void> {
+        std::error_code error;
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(repository / directory, error)) {
+            if (!entry.is_regular_file() || (!extension.empty() && entry.path().extension() != extension)) {
+                continue;
+            }
+            const auto size = entry.file_size(error);
+            if (error) {
+                return std::unexpected(Error{ErrorCode::permanent_io, error.message()});
+            }
+            ++files;
+            stored += size;
+#ifdef _WIN32
+            allocated += size;
+#else
+            struct stat status {};
+            if (stat(entry.path().c_str(), &status) != 0) {
+                return std::unexpected(Error{ErrorCode::permanent_io, std::generic_category().message(errno)});
+            }
+            allocated += static_cast<std::uint64_t>(status.st_blocks) * 512;
+#endif
+        }
+        if (error) {
+            return std::unexpected(Error{ErrorCode::permanent_io, error.message()});
+        }
+        return {};
+    };
+    auto result = scan("chunks", "", report.chunk_objects, report.chunk_stored_bytes, report.chunk_allocated_bytes);
+    if (!result) {
+        return std::unexpected(result.error());
+    }
+    std::uint64_t main_objects = 0;
+    std::uint64_t main_allocated = 0;
+    result = scan("snapshots", ".snap", main_objects, report.snapshot_main_bytes, main_allocated);
+    if (!result) {
+        return std::unexpected(result.error());
+    }
+    std::uint64_t summaries_objects = 0;
+    std::uint64_t summaries_allocated = 0;
+    result = scan("snapshots", ".summary", summaries_objects, report.snapshot_summary_bytes, summaries_allocated);
+    if (!result) {
+        return std::unexpected(result.error());
+    }
+    std::uint64_t ignored = 0;
+    std::uint64_t ignored_allocated = 0;
+    result = scan("sessions", "", report.session_files, ignored, ignored_allocated);
+    if (!result) {
+        return std::unexpected(result.error());
+    }
+    result = scan("cache", "", report.cache_files, ignored, ignored_allocated);
+    if (!result) {
+        return std::unexpected(result.error());
+    }
+    result = scan("quarantine", "", report.quarantine_files, ignored, ignored_allocated);
+    if (!result) {
+        return std::unexpected(result.error());
+    }
+    result = scan("trash", "", report.trash_files, ignored, ignored_allocated);
+    if (!result) {
+        return std::unexpected(result.error());
+    }
+    return report;
 }
 
 domain::Result<repository::SnapshotSummary> resolve_snapshot(

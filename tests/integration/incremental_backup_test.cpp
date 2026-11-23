@@ -72,4 +72,32 @@ TEST_CASE("incremental backups distinguish source reuse from full source reads")
     std::filesystem::remove_all(root);
 }
 
+TEST_CASE("repository statistics distinguish stored and allocated bytes") {
+    const auto root = std::filesystem::path(CPCP_TEST_TEMP_DIR) / "repository-stats-test";
+    std::filesystem::remove_all(root);
+    const auto repository = root / "repo";
+    const auto source = root / "source";
+    std::filesystem::create_directories(source);
+    {
+        std::ofstream(source / "a.txt") << "hello";
+    }
+    cpcp::repository::ConfigOptions config;
+    config.kdf = {8192, 1};
+    config.chunk_size = 1024 * 1024;
+    REQUIRE(cpcp::application::initialize_repository(repository, password(), config));
+    REQUIRE(cpcp::application::backup_add(repository, password(), {source}, {}));
+    const auto stats = cpcp::application::repository_statistics(repository, password()).value();
+    REQUIRE(stats.snapshots == 1);
+    REQUIRE(stats.latest_generation == 1);
+    REQUIRE(stats.logical_bytes == 5);
+    REQUIRE(stats.chunk_objects == 1);
+    REQUIRE(stats.chunk_stored_bytes == 61);
+    REQUIRE(stats.chunk_allocated_bytes >= stats.chunk_stored_bytes);
+    REQUIRE(stats.snapshot_main_bytes > 0);
+    REQUIRE(stats.snapshot_summary_bytes > 0);
+    REQUIRE(stats.session_files == 0);
+    REQUIRE(stats.quarantine_files == 0);
+    std::filesystem::remove_all(root);
+}
+
 }

@@ -272,6 +272,42 @@ int run_verify_command(
     return !report->cache_error.empty() || report->degraded_redundancy ? 3 : 0;
 }
 
+int run_repo_stats_command(const InspectionCommandOptions& options) {
+    auto password = application::read_password(options.config.password_file, !options.config.json);
+    if (!password) {
+        return report_error(password.error());
+    }
+    const auto report = application::repository_statistics(options.repository, *password);
+    if (!report) {
+        return report_error(report.error());
+    }
+    if (options.config.json) {
+        std::cout << nlohmann::json{
+            {"schema", "cpcp.repo-stats.v1"},
+            {"snapshots", std::to_string(report->snapshots)},
+            {"latest_generation", std::to_string(report->latest_generation)},
+            {"logical_bytes", std::to_string(report->logical_bytes)},
+            {"chunk_objects", std::to_string(report->chunk_objects)},
+            {"chunk_stored_bytes", std::to_string(report->chunk_stored_bytes)},
+            {"chunk_allocated_bytes", std::to_string(report->chunk_allocated_bytes)},
+            {"snapshot_main_bytes", std::to_string(report->snapshot_main_bytes)},
+            {"snapshot_summary_bytes", std::to_string(report->snapshot_summary_bytes)},
+            {"session_files", std::to_string(report->session_files)},
+            {"cache_files", std::to_string(report->cache_files)},
+            {"quarantine_files", std::to_string(report->quarantine_files)},
+            {"trash_files", std::to_string(report->trash_files)},
+        }.dump(2) << '\n';
+    } else {
+        std::cout << "Snapshots: " << report->snapshots << "\nLogical bytes: " << report->logical_bytes
+                  << "\nChunks: " << report->chunk_objects << "\nChunk stored bytes: "
+                  << report->chunk_stored_bytes << "\nChunk allocated bytes: "
+                  << report->chunk_allocated_bytes << "\nSession files: " << report->session_files
+                  << "\nQuarantine files: " << report->quarantine_files
+                  << "\nTrash files: " << report->trash_files << '\n';
+    }
+    return 0;
+}
+
 int run_snapshot_browse_command(
     const InspectionCommandOptions& options,
     const std::string& selector,

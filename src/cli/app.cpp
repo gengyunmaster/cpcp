@@ -195,6 +195,12 @@ int run(int argc, char** argv) {
         command->add_flag("--repo-read-only", inspection_options.repo_read_only);
     };
 
+    auto* stats = repo->add_subcommand("stats", "Report repository storage statistics");
+    add_inspection_options(stats);
+    stats->callback([&] {
+        command_result = run_repo_stats_command(inspection_options);
+    });
+
     auto* list = snapshot->add_subcommand("list", "List snapshots");
     add_inspection_options(list);
     list->callback([&] {

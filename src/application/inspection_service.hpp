@@ -74,6 +74,21 @@ struct VerifyReport {
     std::string cache_error;
 };
 
+struct RepositoryStats {
+    std::uint64_t snapshots = 0;
+    std::uint64_t latest_generation = 0;
+    std::uint64_t logical_bytes = 0;
+    std::uint64_t chunk_objects = 0;
+    std::uint64_t chunk_stored_bytes = 0;
+    std::uint64_t chunk_allocated_bytes = 0;
+    std::uint64_t snapshot_main_bytes = 0;
+    std::uint64_t snapshot_summary_bytes = 0;
+    std::uint64_t session_files = 0;
+    std::uint64_t cache_files = 0;
+    std::uint64_t quarantine_files = 0;
+    std::uint64_t trash_files = 0;
+};
+
 domain::Result<RestoreReport> restore_snapshot(
     const std::filesystem::path& repository,
     const crypto::SecretBytes& password,
@@ -85,6 +100,11 @@ domain::Result<VerifyReport> verify_repository(
     const std::filesystem::path& repository,
     const crypto::SecretBytes& password,
     const VerifyOptions& options
+);
+
+domain::Result<RepositoryStats> repository_statistics(
+    const std::filesystem::path& repository,
+    const crypto::SecretBytes& password
 );
 
 domain::Result<repository::SnapshotSummary> resolve_snapshot(

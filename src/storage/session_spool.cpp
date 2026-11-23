@@ -1,5 +1,7 @@
 #include "storage/session_spool.hpp"
 
+#include "domain/encoding.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -78,6 +80,34 @@ domain::Result<void> SessionSpoolWriter::create(
     auto result = file_->write_all(header);
     if (!result) {
         return result;
+    }
+    if (domain == crypto::StreamDomain::snapshot) {
+        result = file_->write_all(context.repository_uuid);
+        if (!result) {
+            return result;
+        }
+        result = file_->write_all(context.storage_epoch);
+        if (!result) {
+            return result;
+        }
+        result = file_->write_all(context.snapshot_uuid);
+        if (!result) {
+            return result;
+        }
+        result = file_->write_all(context.lineage_uuid);
+        if (!result) {
+            return result;
+        }
+        Bytes generation;
+        domain::append_le(generation, context.generation, 8);
+        result = file_->write_all(generation);
+        if (!result) {
+            return result;
+        }
+        result = file_->write_all(context.session_uuid);
+        if (!result) {
+            return result;
+        }
     }
     return file_->write_all(encoder_->header());
 }
@@ -164,11 +194,49 @@ domain::Result<void> SessionSpoolReader::open(
     }
 
     std::array<std::byte, crypto::snapshot_header_size> stream_header{};
+    if (domain == crypto::StreamDomain::snapshot) {
+        crypto::SnapshotContext embedded;
+        result = read_tracked(embedded.repository_uuid);
+        if (!result) {
+            return std::unexpected(result.error());
+        }
+        result = read_tracked(embedded.storage_epoch);
+        if (!result) {
+            return std::unexpected(result.error());
+        }
+        result = read_tracked(embedded.snapshot_uuid);
+        if (!result) {
+            return std::unexpected(result.error());
+        }
+        result = read_tracked(embedded.lineage_uuid);
+        if (!result) {
+            return std::unexpected(result.error());
+        }
+        std::array<std::byte, 8> generation{};
+        result = read_tracked(generation);
+        if (!result) {
+            return std::unexpected(result.error());
+        }
+        embedded.generation = domain::read_le(generation, 8).value();
+        result = read_tracked(embedded.session_uuid);
+        if (!result) {
+            return std::unexpected(result.error());
+        }
+        const bool empty_context = std::ranges::all_of(context.repository_uuid, [](std::byte value) {
+            return value == std::byte{0};
+        });
+        if (!empty_context && embedded != context) {
+            return std::unexpected(Error{ErrorCode::integrity, "snapshot header context mismatch"});
+        }
+        context_ = embedded;
+    } else {
+        context_ = context;
+    }
     result = read_tracked(stream_header);
     if (!result) {
         return result;
     }
-    decoder_.emplace(context, key, stream_header, domain);
+    decoder_.emplace(context_, key, stream_header, domain);
     return {};
 }
 
@@ -258,6 +326,10 @@ domain::Result<crypto::Digest> SessionSpoolReader::ciphertext_digest() const {
 
 std::uint64_t SessionSpoolReader::stored_length() const {
     return stored_length_;
+}
+
+const crypto::SnapshotContext& SessionSpoolReader::context() const {
+    return context_;
 }
 
 }

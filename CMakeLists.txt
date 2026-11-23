@@ -97,6 +97,7 @@ add_library(cpcp_application STATIC
     src/application/backup_service.cpp
     src/application/credentials.cpp
     src/application/inspection_service.cpp
+    src/application/recovery_service.cpp
     src/application/repository_service.cpp
 )
 target_link_libraries(cpcp_application PUBLIC
@@ -112,6 +113,7 @@ add_library(cpcp_cli STATIC
     src/cli/errors.cpp
     src/cli/inspection_command.cpp
     src/cli/probe_command.cpp
+    src/cli/recovery_command.cpp
 )
 target_link_libraries(cpcp_cli PUBLIC
     cpcp_domain
@@ -144,6 +146,15 @@ if(BUILD_TESTING)
         Catch2::Catch2WithMain
     )
     cpcp_enable_warnings(cpcp_unit_tests)
+
+    add_executable(cpcp_recovery_tests
+        tests/integration/recovery_service_test.cpp
+    )
+    target_link_libraries(cpcp_recovery_tests PRIVATE
+        cpcp_application
+        Catch2::Catch2WithMain
+    )
+    cpcp_enable_warnings(cpcp_recovery_tests)
 
     add_executable(cpcp_backup_tests
         tests/integration/backup_service_test.cpp
@@ -184,6 +195,7 @@ if(BUILD_TESTING)
 
     include(Catch)
     catch_discover_tests(cpcp_unit_tests)
+    catch_discover_tests(cpcp_recovery_tests)
     catch_discover_tests(cpcp_backup_tests)
     catch_discover_tests(cpcp_spool_tests)
     catch_discover_tests(cpcp_native_file_tests)

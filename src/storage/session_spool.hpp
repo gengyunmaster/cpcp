@@ -65,10 +65,12 @@ public:
     domain::Result<void> finish() const;
     domain::Result<crypto::Digest> ciphertext_digest() const;
     std::uint64_t stored_length() const;
+    const crypto::SnapshotContext& context() const;
 
 private:
     std::optional<platform::BinaryFile> file_;
     std::optional<crypto::SnapshotDecoder> decoder_;
+    crypto::SnapshotContext context_{};
     crypto_hash_sha256_state digest_state_{};
     std::uint64_t stored_length_ = 0;
     bool done_ = false;

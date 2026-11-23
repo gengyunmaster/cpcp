@@ -4,6 +4,7 @@
 #include "cli/backup_command.hpp"
 #include "cli/inspection_command.hpp"
 #include "cli/probe_command.hpp"
+#include "cli/recovery_command.hpp"
 #include "cli/errors.hpp"
 
 #include <CLI/CLI.hpp>
@@ -171,6 +172,43 @@ int run(int argc, char** argv) {
     add_inspection_options(verify);
     verify->callback([&] {
         command_result = run_verify_command(inspection_options, deep_verify);
+    });
+
+    auto* quarantine = repo->add_subcommand("quarantine", "Quarantine a damaged object");
+    RecoveryCommandOptions recovery_options;
+    recovery_options.config = config_options;
+    std::string quarantine_selector;
+    quarantine->add_option("object", quarantine_selector)->required();
+    quarantine->add_option("--repo", recovery_options.repository)
+        ->default_val(recovery_options.repository);
+    quarantine->add_option("--password-file", recovery_options.config.password_file);
+    quarantine->add_flag("--json", recovery_options.config.json);
+    quarantine->add_flag("--dry-run", recovery_options.dry_run);
+    quarantine->add_flag("--yes", recovery_options.yes);
+    quarantine->callback([&] {
+        command_result = run_quarantine_command(recovery_options, quarantine_selector);
+    });
+
+    auto* repair_summary = repo->add_subcommand("repair-summary", "Rebuild a snapshot summary");
+    std::uint64_t repair_generation = 0;
+    repair_summary->add_option("generation", repair_generation)->required();
+    repair_summary->add_option("--repo", recovery_options.repository)
+        ->default_val(recovery_options.repository);
+    repair_summary->add_option("--password-file", recovery_options.config.password_file);
+    repair_summary->add_flag("--json", recovery_options.config.json);
+    repair_summary->add_flag("--yes", recovery_options.yes);
+    repair_summary->callback([&] {
+        command_result = run_repair_summary_command(recovery_options, repair_generation);
+    });
+
+    auto* repair_config = repo->add_subcommand("repair-config", "Repair configuration replicas");
+    repair_config->add_option("--repo", recovery_options.repository)
+        ->default_val(recovery_options.repository);
+    repair_config->add_option("--password-file", recovery_options.config.password_file);
+    repair_config->add_flag("--json", recovery_options.config.json);
+    repair_config->add_flag("--yes", recovery_options.yes);
+    repair_config->callback([&] {
+        command_result = run_repair_config_command(recovery_options);
     });
 
     auto* probe = repo->add_subcommand("probe", "Probe filesystem capabilities");

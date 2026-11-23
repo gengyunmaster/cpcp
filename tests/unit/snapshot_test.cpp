@@ -164,6 +164,10 @@ TEST_CASE("snapshot stream and summary round trip through typed records") {
         fixture.master,
         summaries[0]
     ).value();
+    const auto context_record = reader.next().value();
+    REQUIRE(cpcp::repository::parse_snapshot_context(*context_record));
+    const auto header_record = reader.next().value();
+    REQUIRE(cpcp::repository::parse_snapshot_header(*header_record));
     const auto root = reader.next().value();
     REQUIRE(cpcp::repository::parse_root(*root));
     const auto directory = reader.next().value();

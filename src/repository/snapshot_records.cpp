@@ -83,6 +83,45 @@ SnapshotStats parse_stats(const json& object) {
 
 }
 
+domain::Result<crypto::SnapshotContext> parse_snapshot_context(
+    const storage::SpoolRecord& record
+) {
+    try {
+        const auto document = parse_document(record, "cpcp.snapshot-context.v1");
+        crypto::SnapshotContext context;
+        context.repository_uuid = require_hex<16>(document, "repository_uuid");
+        context.storage_epoch = require_hex<16>(document, "storage_epoch");
+        context.snapshot_uuid = require_hex<16>(document, "snapshot_uuid");
+        context.lineage_uuid = require_hex<16>(document, "lineage_uuid");
+        context.generation = require_uint_string(document, "generation");
+        context.session_uuid = require_hex<16>(document, "session_uuid");
+        return context;
+    } catch (const std::exception& error) {
+        return std::unexpected(Error{ErrorCode::integrity, error.what()});
+    }
+}
+
+domain::Result<SnapshotHeaderInfo> parse_snapshot_header(
+    const storage::SpoolRecord& record
+) {
+    try {
+        const auto document = parse_document(record, "cpcp.snapshot-header.v1");
+        SnapshotHeaderInfo header;
+        const auto& created = document.at("created_at");
+        header.created_seconds = require_int_string(created, "seconds");
+        header.created_nanoseconds = static_cast<std::uint32_t>(require_uint(created, "nanoseconds"));
+        header.tool_version = require_string(document, "tool_version");
+        header.has_parent = document.at("has_parent").get<bool>();
+        if (header.has_parent) {
+            header.parent_uuid = require_hex<16>(document, "parent_uuid");
+            header.parent_summary_digest = require_hex<32>(document, "parent_summary_digest");
+        }
+        return header;
+    } catch (const std::exception& error) {
+        return std::unexpected(Error{ErrorCode::integrity, error.what()});
+    }
+}
+
 domain::Result<RootInfo> parse_root(const storage::SpoolRecord& record) {
     try {
         const auto document = parse_document(record, "cpcp.root.v1");

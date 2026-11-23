@@ -19,6 +19,7 @@ struct SnapshotContext {
     std::array<std::byte, 16> snapshot_uuid;
     std::array<std::byte, 16> lineage_uuid;
     std::uint64_t generation;
+    std::array<std::byte, 16> session_uuid{};
 
     bool operator==(const SnapshotContext&) const = default;
 };

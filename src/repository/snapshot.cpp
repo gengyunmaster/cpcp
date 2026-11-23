@@ -153,6 +153,7 @@ SnapshotSummary parse_summary(const json& document) {
     summary.context.lineage_uuid = require_hex<16>(document, "lineage_uuid");
     summary.context.generation = require_string_uint(document, "generation");
     summary.session_uuid = require_hex<16>(document, "session_uuid");
+    summary.context.session_uuid = summary.session_uuid;
     summary.status = require_string(document, "status");
     summary.has_parent = document.at("has_parent").get<bool>();
     if (summary.has_parent) {
@@ -237,6 +238,10 @@ domain::Result<void> write_summary_file(
     if (!result) {
         return result;
     }
+    result = file->write_all(context.session_uuid);
+    if (!result) {
+        return result;
+    }
     result = file->write_all(sealed->nonce);
     if (!result) {
         return result;
@@ -302,6 +307,10 @@ domain::Result<SnapshotSummary> read_summary_file(
         return std::unexpected(result.error());
     }
     context.generation = domain::read_le(generation, 8).value();
+    result = file->read_exact(context.session_uuid);
+    if (!result) {
+        return std::unexpected(result.error());
+    }
 
     crypto::SealedObject object;
     result = file->read_exact(object.nonce);
@@ -343,7 +352,17 @@ domain::Result<SnapshotSummary> read_summary_file(
         }
         auto summary = parse_summary(*document);
         if (summary.context != context) {
-            return std::unexpected(Error{ErrorCode::integrity, "summary header and payload context mismatch"});
+            std::string mismatch;
+            if (summary.context.repository_uuid != context.repository_uuid) mismatch += "repository ";
+            if (summary.context.storage_epoch != context.storage_epoch) mismatch += "epoch ";
+            if (summary.context.snapshot_uuid != context.snapshot_uuid) mismatch += "snapshot ";
+            if (summary.context.lineage_uuid != context.lineage_uuid) mismatch += "lineage ";
+            if (summary.context.generation != context.generation) mismatch += "generation ";
+            if (summary.context.session_uuid != context.session_uuid) {
+                mismatch += "session(header=" + domain::hex_encode(context.session_uuid)
+                    + ",payload=" + domain::hex_encode(summary.context.session_uuid) + ")";
+            }
+            return std::unexpected(Error{ErrorCode::integrity, "summary header and payload context mismatch: " + mismatch});
         }
         return summary;
     } catch (const std::exception& error) {
@@ -351,6 +370,21 @@ domain::Result<SnapshotSummary> read_summary_file(
     }
 }
 
+}
+
+domain::Result<void> write_snapshot_summary(
+    const std::filesystem::path& path,
+    const crypto::SecureKey& snapshot_key,
+    const SnapshotSummary& summary
+) {
+    return write_summary_file(path, snapshot_key, summary);
+}
+
+domain::Result<SnapshotSummary> read_snapshot_summary(
+    const std::filesystem::path& path,
+    const crypto::SecureKey& snapshot_key
+) {
+    return read_summary_file(path, snapshot_key);
 }
 
 std::string snapshot_basename(
@@ -388,8 +422,9 @@ domain::Result<SnapshotWriter> SnapshotWriter::create(
     std::optional<SnapshotSummary> parent
 ) {
     SnapshotSummary summary;
+    context.session_uuid = session_uuid;
     summary.context = context;
-    summary.session_uuid = session_uuid;
+    summary.session_uuid = context.session_uuid;
     if (parent) {
         summary.has_parent = true;
         summary.parent_uuid = parent->context.snapshot_uuid;
@@ -414,13 +449,48 @@ domain::Result<SnapshotWriter> SnapshotWriter::create(
     if (!created) {
         return std::unexpected(created.error());
     }
-    return SnapshotWriter(
+    SnapshotWriter result(
         std::move(repository),
         config,
         std::move(summary),
         std::move(key).value(),
         std::move(writer)
     );
+    auto appended = result.append(crypto::RecordType::context, {
+        {"schema", "cpcp.snapshot-context.v1"},
+        {"repository_uuid", domain::hex_encode(context.repository_uuid)},
+        {"storage_epoch", domain::hex_encode(context.storage_epoch)},
+        {"snapshot_uuid", domain::hex_encode(context.snapshot_uuid)},
+        {"lineage_uuid", domain::hex_encode(context.lineage_uuid)},
+        {"generation", std::to_string(context.generation)},
+        {"session_uuid", domain::hex_encode(context.session_uuid)},
+    });
+    if (!appended) {
+        return std::unexpected(appended.error());
+    }
+    appended = result.append(crypto::RecordType::snapshot_header, {
+        {"schema", "cpcp.snapshot-header.v1"},
+        {"created_at", {
+            {"seconds", std::to_string(result.summary_.created_seconds)},
+            {"nanoseconds", result.summary_.created_nanoseconds},
+        }},
+        {"tool_version", "0.1.0"},
+        {"has_parent", result.summary_.has_parent},
+        {"parent_uuid", result.summary_.has_parent
+            ? json(domain::hex_encode(result.summary_.parent_uuid))
+            : json(nullptr)},
+        {"parent_summary_digest", result.summary_.has_parent
+            ? json(crypto::to_hex(result.summary_.parent_summary_digest))
+            : json(nullptr)},
+        {"selection", {
+            {"unsupported", "skip"},
+            {"one_file_system", true},
+        }},
+    });
+    if (!appended) {
+        return std::unexpected(appended.error());
+    }
+    return result;
 }
 
 SnapshotWriter::SnapshotWriter(

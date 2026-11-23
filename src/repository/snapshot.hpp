@@ -96,6 +96,16 @@ std::filesystem::path snapshot_summary_path(
     const SnapshotSummary& summary
 );
 
+domain::Result<void> write_snapshot_summary(
+    const std::filesystem::path& path,
+    const crypto::SecureKey& snapshot_key,
+    const SnapshotSummary& summary
+);
+domain::Result<SnapshotSummary> read_snapshot_summary(
+    const std::filesystem::path& path,
+    const crypto::SecureKey& snapshot_key
+);
+
 class SnapshotWriter {
 public:
     SnapshotWriter(const SnapshotWriter&) = delete;
@@ -179,6 +189,21 @@ domain::Result<std::vector<SnapshotSummary>> list_snapshots(
     const crypto::SecureKey& master_key
 );
 
+struct SnapshotHeaderInfo {
+    std::int64_t created_seconds = 0;
+    std::uint32_t created_nanoseconds = 0;
+    std::string tool_version;
+    bool has_parent = false;
+    domain::Uuid parent_uuid{};
+    crypto::Digest parent_summary_digest{};
+};
+
+domain::Result<crypto::SnapshotContext> parse_snapshot_context(
+    const storage::SpoolRecord& record
+);
+domain::Result<SnapshotHeaderInfo> parse_snapshot_header(
+    const storage::SpoolRecord& record
+);
 domain::Result<RootInfo> parse_root(const storage::SpoolRecord& record);
 domain::Result<DirectoryInfo> parse_directory(const storage::SpoolRecord& record);
 domain::Result<FileInfo> parse_file_header(const storage::SpoolRecord& record);

@@ -96,7 +96,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Linux build prerequisites
-        run: sudo apt-get update && sudo apt-get install -y autoconf autoconf-archive automake libtool pkg-config clang libc++-dev libc++abi-dev
+        run: sudo apt-get update && sudo apt-get install -y autoconf autoconf-archive automake libtool pkg-config
 
       - name: Bootstrap vcpkg
         shell: bash
@@ -104,6 +104,9 @@ jobs:
           git clone https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
           git -C "$VCPKG_ROOT" checkout 277978ad2eddc3b05ecf288dcd33071968cd2f79
           "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
+
+      - name: Install independent Python dependencies
+        run: python3 -m pip install -r tools/requirements.txt
 
       - name: Configure
         run: cmake --preset ${{ matrix.preset }} -DVCPKG_TARGET_TRIPLET=x64-linux -DCPCP_ENABLE_REFERENCE_TESTS=ON

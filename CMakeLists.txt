@@ -7,6 +7,7 @@ include(CTest)
 find_package(CLI11 CONFIG REQUIRED)
 find_package(Catch2 3 CONFIG REQUIRED)
 find_package(unofficial-sodium CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 
 function(cpcp_enable_warnings target)
     if(MSVC)
@@ -35,6 +36,12 @@ target_compile_definitions(cpcp_platform INTERFACE
     CPCP_TEST_TEMP_DIR="${CMAKE_CURRENT_BINARY_DIR}"
 )
 cpcp_enable_warnings(cpcp_platform)
+
+add_library(cpcp_probe STATIC
+    src/platform/durability_probe.cpp
+)
+target_link_libraries(cpcp_probe PUBLIC cpcp_platform)
+cpcp_enable_warnings(cpcp_probe)
 
 add_library(cpcp_crypto STATIC
     src/crypto/aead.cpp
@@ -66,8 +73,14 @@ cpcp_enable_warnings(cpcp_spool)
 
 add_library(cpcp_cli STATIC
     src/cli/app.cpp
+    src/cli/probe_command.cpp
 )
-target_link_libraries(cpcp_cli PUBLIC cpcp_domain CLI11::CLI11)
+target_link_libraries(cpcp_cli PUBLIC
+    cpcp_domain
+    cpcp_probe
+    CLI11::CLI11
+    nlohmann_json::nlohmann_json
+)
 target_compile_definitions(cpcp_cli PRIVATE CPCP_VERSION="${PROJECT_VERSION}")
 cpcp_enable_warnings(cpcp_cli)
 
@@ -126,6 +139,13 @@ if(BUILD_TESTING)
         NAME cli_contract
         COMMAND ${CMAKE_COMMAND}
             -DCPCP_EXECUTABLE=$<TARGET_FILE:cpcp>
+            -DCPCP_PROBE_DIR=${CMAKE_CURRENT_BINARY_DIR}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/cli_contract.cmake
+    )
+
+    add_test(
+        NAME cli_probe_write
+        COMMAND $<TARGET_FILE:cpcp> repo probe ${CMAKE_CURRENT_BINARY_DIR}
+            --write-test --iterations 2 --size 65536 --json
     )
 endif()

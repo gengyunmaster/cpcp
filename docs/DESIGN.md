@@ -264,7 +264,7 @@ The initial layout is:
 
 There is no mutable `current` pointer. The latest snapshot is derived from authenticated snapshot metadata, not trusted from a filename alone.
 
-`repo probe` is read-only. `repo init` accepts only a newly created or empty target directory, performs capability checks before publishing any repository identity, and writes the configuration replicas only after the required directory structure and locking primitives are usable. A failed initialization is not a valid repository and must not be opened or populated with user data until explicitly reinitialized.
+`repo probe` is read-only by default. `--write-test` explicitly authorizes creation, flushing, publication, and removal of uniquely named probe files in the target directory; no pre-existing user file is modified. `repo init` accepts only a newly created or empty target directory, performs capability checks before publishing any repository identity, and writes the configuration replicas only after the required directory structure and locking primitives are usable. A failed initialization is not a valid repository and must not be opened or populated with user data until explicitly reinitialized.
 
 ### 7.2 Discovery and locking
 
@@ -873,6 +873,7 @@ If several conditions apply, integrity failure takes precedence over a partial r
 ```bash
 # Probe, initialize, and protect repository headers
 cpcp repo probe /mnt/backup --json
+cpcp repo probe /mnt/backup --write-test --iterations 20 --size 1048576 --json
 cpcp repo init /mnt/backup/cpcp --chunk-size 8MiB
 cpcp repo init /mnt/backup/cpcp --kdf-memory 256MiB --kdf-iterations 3 \
   --password-file /run/user/1000/cpcp-password

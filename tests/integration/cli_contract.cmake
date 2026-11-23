@@ -49,3 +49,22 @@ endif()
 if(unknown_error STREQUAL "")
     message(FATAL_ERROR "Unknown command did not write a diagnostic")
 endif()
+
+execute_process(
+    COMMAND "${CPCP_EXECUTABLE}" repo probe "${CPCP_PROBE_DIR}" --json
+    RESULT_VARIABLE probe_result
+    OUTPUT_VARIABLE probe_output
+    ERROR_VARIABLE probe_error
+)
+if(NOT probe_result EQUAL 0)
+    message(FATAL_ERROR "Read-only probe returned ${probe_result}: ${probe_error}")
+endif()
+if(NOT probe_output MATCHES "\"schema\": \"cpcp.repo-probe.v1\"")
+    message(FATAL_ERROR "Probe JSON has no schema: ${probe_output}")
+endif()
+if(NOT probe_output MATCHES "\"write_test\": false")
+    message(FATAL_ERROR "Default probe enabled writes: ${probe_output}")
+endif()
+if(NOT probe_error STREQUAL "")
+    message(FATAL_ERROR "Read-only probe wrote to stderr: ${probe_error}")
+endif()

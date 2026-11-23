@@ -41,9 +41,18 @@ struct SnapshotFrame {
     Bytes ciphertext;
 };
 
+enum class StreamDomain {
+    snapshot,
+    session_spool,
+};
+
 class SnapshotEncoder {
 public:
-    SnapshotEncoder(const SnapshotContext& context, const SecureKey& key);
+    SnapshotEncoder(
+        const SnapshotContext& context,
+        const SecureKey& key,
+        StreamDomain domain = StreamDomain::snapshot
+    );
     ~SnapshotEncoder();
 
     SnapshotEncoder(const SnapshotEncoder&) = delete;
@@ -60,6 +69,7 @@ public:
 
 private:
     SnapshotContext context_;
+    StreamDomain domain_;
     crypto_secretstream_xchacha20poly1305_state state_;
     std::array<std::byte, snapshot_header_size> header_;
     std::uint64_t next_index_ = 0;
@@ -71,7 +81,8 @@ public:
     SnapshotDecoder(
         const SnapshotContext& context,
         const SecureKey& key,
-        const std::array<std::byte, snapshot_header_size>& header
+        const std::array<std::byte, snapshot_header_size>& header,
+        StreamDomain domain = StreamDomain::snapshot
     );
     ~SnapshotDecoder();
 
@@ -86,6 +97,7 @@ public:
 
 private:
     SnapshotContext context_;
+    StreamDomain domain_;
     crypto_secretstream_xchacha20poly1305_state state_;
     std::uint64_t next_index_ = 0;
     bool finalized_ = false;

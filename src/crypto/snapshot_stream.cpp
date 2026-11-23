@@ -41,11 +41,15 @@ bool valid_record_type(RecordType type) {
 Bytes frame_aad(
     const SnapshotContext& context,
     std::uint64_t index,
-    RecordType type
+    RecordType type,
+    StreamDomain domain
 ) {
     Bytes aad;
     aad.reserve(16 + 16 + 16 + 16 + 8 + 8 + 1 + 16);
-    append_string(aad, "cpcp.snapshot.v1");
+    append_string(
+        aad,
+        domain == StreamDomain::snapshot ? "cpcp.snapshot.v1" : "cpcp.spool.v1"
+    );
     aad.insert(aad.end(), context.repository_uuid.begin(), context.repository_uuid.end());
     aad.insert(aad.end(), context.storage_epoch.begin(), context.storage_epoch.end());
     aad.insert(aad.end(), context.snapshot_uuid.begin(), context.snapshot_uuid.end());
@@ -66,8 +70,11 @@ const unsigned char* as_const(const std::byte* data) {
 
 }
 
-SnapshotEncoder::SnapshotEncoder(const SnapshotContext& context, const SecureKey& key)
-    : context_(context) {
+SnapshotEncoder::SnapshotEncoder(
+    const SnapshotContext& context,
+    const SecureKey& key,
+    StreamDomain domain
+) : context_(context), domain_(domain) {
     if (crypto_secretstream_xchacha20poly1305_init_push(
             &state_,
             as_mutable(header_.data()),
@@ -99,7 +106,7 @@ domain::Result<SnapshotFrame> SnapshotEncoder::push(
         return std::unexpected(Error{ErrorCode::usage, "snapshot frame exceeds the size limit"});
     }
 
-    const auto aad = frame_aad(context_, next_index_, type);
+    const auto aad = frame_aad(context_, next_index_, type, domain_);
     SnapshotFrame frame{next_index_, type, Bytes(plaintext.size() + crypto_secretstream_xchacha20poly1305_ABYTES)};
     const unsigned char tag = type == RecordType::final_summary
         ? crypto_secretstream_xchacha20poly1305_TAG_FINAL
@@ -130,8 +137,9 @@ bool SnapshotEncoder::finalized() const {
 SnapshotDecoder::SnapshotDecoder(
     const SnapshotContext& context,
     const SecureKey& key,
-    const std::array<std::byte, snapshot_header_size>& header
-) : context_(context) {
+    const std::array<std::byte, snapshot_header_size>& header,
+    StreamDomain domain
+) : context_(context), domain_(domain) {
     if (crypto_secretstream_xchacha20poly1305_init_pull(
             &state_,
             as_const(header.data()),
@@ -157,7 +165,7 @@ domain::Result<Bytes> SnapshotDecoder::pull(const SnapshotFrame& frame) {
         return std::unexpected(Error{ErrorCode::integrity, "invalid snapshot frame size"});
     }
 
-    const auto aad = frame_aad(context_, frame.index, frame.type);
+    const auto aad = frame_aad(context_, frame.index, frame.type, domain_);
     Bytes plaintext(frame.ciphertext.size() - crypto_secretstream_xchacha20poly1305_ABYTES);
     unsigned long long plaintext_size = 0;
     unsigned char tag = 0;

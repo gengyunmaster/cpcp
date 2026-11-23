@@ -55,6 +55,15 @@ add_library(cpcp_simulation STATIC
 target_link_libraries(cpcp_simulation PUBLIC cpcp_domain)
 cpcp_enable_warnings(cpcp_simulation)
 
+add_library(cpcp_spool STATIC
+    src/storage/session_spool.cpp
+)
+target_link_libraries(cpcp_spool PUBLIC
+    cpcp_crypto
+    cpcp_platform
+)
+cpcp_enable_warnings(cpcp_spool)
+
 add_library(cpcp_cli STATIC
     src/cli/app.cpp
 )
@@ -80,6 +89,15 @@ if(BUILD_TESTING)
     )
     cpcp_enable_warnings(cpcp_unit_tests)
 
+    add_executable(cpcp_spool_tests
+        tests/integration/session_spool_test.cpp
+    )
+    target_link_libraries(cpcp_spool_tests PRIVATE
+        cpcp_spool
+        Catch2::Catch2WithMain
+    )
+    cpcp_enable_warnings(cpcp_spool_tests)
+
     add_executable(cpcp_native_file_tests
         tests/integration/native_file_test.cpp
     )
@@ -100,6 +118,7 @@ if(BUILD_TESTING)
 
     include(Catch)
     catch_discover_tests(cpcp_unit_tests)
+    catch_discover_tests(cpcp_spool_tests)
     catch_discover_tests(cpcp_native_file_tests)
     catch_discover_tests(cpcp_simulation_tests)
 

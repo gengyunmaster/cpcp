@@ -1,6 +1,6 @@
 # Platform Durability Contract
 
-> Status: M0 experimental contract and conformance record
+> Status: M1 native conformance record
 
 This document distinguishes implementation intent from observed results. Passing an API call is not proof of physical durability. No entry implies protection against a device that ignores flush commands or corrupts data silently.
 
@@ -72,15 +72,27 @@ Additional five-iteration Release probes compared candidate chunk-sized payloads
 
 This small virtualized-disk sample is insufficient to choose a production chunk size. Physical source and repository devices, small files, memory pressure, and CDC trade-offs remain M1b benchmark inputs.
 
-## 4. Platform matrix
+## 4. M1 verification record
+
+The finalized M1 implementation passed:
+
+- 64/64 Debug tests, including the independent Python reference recoverer;
+- 64/64 Release tests, including the independent Python reference recoverer;
+- independent content-ID, AEAD, secretstream, and BLAKE2b KDF vectors;
+- MinGW compilation of all C++ production and test sources, including the large-manifest stress source;
+- an opt-in synthetic manifest streaming test that wrote, read, authenticated, and validated more than 3.4 GB of snapshot ciphertext.
+
+Routine CI keeps the large I/O stress test disabled, while the complete Debug, Release, and reference-recovery suites remain enabled.
+
+## 5. Platform matrix
 
 | Platform and filesystem | File flush | No-replace publication | Directory sync | Forced crash | Status |
 | --- | --- | --- | --- | --- | --- |
-| Linux ext4, build environment | Passed | Passed | Passed | Not run | Experimental native probe passed |
+| Linux ext4, build environment | Passed | Passed | Passed | Not run | M1 native backup, restore, and recovery tests passed |
 | Linux XFS/Btrfs | Not run | Not run | Not run | Not run | Unverified |
 | Linux FAT/exFAT | Not run | Not run | Not run | Not run | Unverified; initialization must reject unmet capabilities |
 | macOS APFS | Code path only | Code path only | Code path only | Not run | Unverified |
-| Windows NTFS | Code path only | Code path only | Unsupported | Not run | Not suitable for strict repository mutation yet |
+| Windows NTFS | Code path only | Code path only | Unsupported | Not run | MinGW compilation passed; strict repository mutation remains unsupported |
 | Network filesystems | Not run | Not run | Not run | Not run | Unsupported until independently verified |
 
 ## 6. Windows safe restore traversal evaluation

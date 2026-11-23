@@ -1,8 +1,8 @@
-# Experimental cpcp Format Prototypes
+# cpcp Core Format v1
 
-> Status: M0 experimental specification; no repository compatibility guarantee
+> Status: Core format version 1, validated by the M1 implementation and independent recovery tests
 
-This document describes the formats implemented by the M0 prototypes. It does not freeze repository format v1. `docs/DESIGN.md` remains the architecture and behavior baseline.
+This document defines the implemented cpcp core repository format. It is versioned independently of `docs/DESIGN.md`, which remains the architecture and behavior baseline. Any incompatible format change requires a new format version and explicit migration tooling.
 
 ## 1. Encoding rules
 
@@ -195,16 +195,10 @@ repeated {
 
 The final record is `final_summary`. The writer flushes and closes the file after FINAL. The reader enforces frame-length bounds and requires physical EOF immediately after FINAL. A torn header or ciphertext returns an integrity error. Source paths and metadata appear only inside authenticated encrypted frames.
 
-## 7. Prototype boundaries
+## 7. Validation and feature-specific formats
 
-Implemented tests cover independent content-ID and AEAD vectors, key separation, continuation validation, AAD binding, tampering, reordering, FINAL handling, spool confidentiality, and native spool reads and writes.
+Validation covers independent content-ID and AEAD vectors, key separation, continuation validation, AAD binding, tampering, reordering, FINAL handling, spool confidentiality, native spool reads and writes, full C++ backup/restore, recovery paths, independent Python recovery of C++-written repositories, and a multi-gigabyte synthetic manifest streaming stress test.
 
-The following remain later format work:
+Core version 1 includes strict bounded JSON record batches, authenticated configuration replicas and password slots, self-describing chunk envelopes, snapshot context records, authenticated summary sidecars, maintenance transition records, and idempotent snapshot finalization.
 
-- strict JSON snapshot record batches and typed summary sidecars;
-- configuration replicas and password key slots;
-- repository chunk envelope headers;
-- idempotent snapshot finalization and maintenance records;
-- native production commit protocols and failure-injected integration.
-
-No M0 file should be treated as a production cpcp backup repository.
+Journal and resume formats, validation-cache formats, retention metadata, and packed objects remain separately versioned feature work rather than hidden changes to this core format.

@@ -10,17 +10,17 @@
 
 namespace cpcp::repository {
 
-inline constexpr std::uint32_t experimental_format_version = 0;
+inline constexpr std::uint32_t core_format_version = 1;
 inline constexpr std::size_t config_file_limit = 128 * 1024;
 
 struct ConfigOptions {
     crypto::PasswordKdfParameters kdf;
     std::uint32_t chunk_size = 8 * 1024 * 1024;
-    std::uint32_t format_version = experimental_format_version;
+    std::uint32_t format_version = core_format_version;
 };
 
 struct RepositoryConfig {
-    std::uint32_t format_version = experimental_format_version;
+    std::uint32_t format_version = core_format_version;
     std::uint64_t revision = 1;
     domain::Uuid repository_uuid{};
     domain::Uuid storage_epoch{};

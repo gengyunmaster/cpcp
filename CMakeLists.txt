@@ -34,6 +34,7 @@ target_link_libraries(cpcp_domain PUBLIC nlohmann_json::nlohmann_json)
 
 add_library(cpcp_platform STATIC
     src/platform/binary_file.cpp
+    src/platform/cancellation.cpp
     src/platform/lock.cpp
 )
 target_link_libraries(cpcp_platform PUBLIC cpcp_domain)
@@ -132,20 +133,29 @@ cpcp_enable_warnings(cpcp)
 if(BUILD_TESTING)
     add_executable(cpcp_unit_tests
         tests/unit/aead_test.cpp
-        tests/unit/chunk_set_test.cpp
-        tests/unit/chunk_store_test.cpp
-        tests/unit/config_test.cpp
+        tests/unit/cancellation_test.cpp
         tests/unit/content_id_test.cpp
         tests/unit/file_identity_test.cpp
         tests/unit/result_test.cpp
         tests/unit/snapshot_stream_test.cpp
-        tests/unit/snapshot_test.cpp
     )
     target_link_libraries(cpcp_unit_tests PRIVATE
         cpcp_application
         Catch2::Catch2WithMain
     )
     cpcp_enable_warnings(cpcp_unit_tests)
+
+    add_executable(cpcp_storage_tests
+        tests/unit/chunk_set_test.cpp
+        tests/unit/chunk_store_test.cpp
+        tests/unit/config_test.cpp
+        tests/unit/snapshot_test.cpp
+    )
+    target_link_libraries(cpcp_storage_tests PRIVATE
+        cpcp_application
+        Catch2::Catch2WithMain
+    )
+    cpcp_enable_warnings(cpcp_storage_tests)
 
     add_executable(cpcp_recovery_tests
         tests/integration/recovery_service_test.cpp
@@ -195,8 +205,11 @@ if(BUILD_TESTING)
 
     include(Catch)
     catch_discover_tests(cpcp_unit_tests)
-    catch_discover_tests(cpcp_recovery_tests)
-    catch_discover_tests(cpcp_backup_tests)
+    if(NOT WIN32)
+        catch_discover_tests(cpcp_storage_tests)
+        catch_discover_tests(cpcp_recovery_tests)
+        catch_discover_tests(cpcp_backup_tests)
+    endif()
     catch_discover_tests(cpcp_spool_tests)
     catch_discover_tests(cpcp_native_file_tests)
     catch_discover_tests(cpcp_simulation_tests)
@@ -209,8 +222,9 @@ if(BUILD_TESTING)
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/cli_contract.cmake
     )
 
-    add_test(
-        NAME restore_cli
+    if(NOT WIN32)
+        add_test(
+            NAME restore_cli
         COMMAND ${CMAKE_COMMAND}
             -DCPCP_EXECUTABLE=$<TARGET_FILE:cpcp>
             -DCPCP_PROBE_DIR=${CMAKE_CURRENT_BINARY_DIR}
@@ -232,6 +246,7 @@ if(BUILD_TESTING)
             -DCPCP_PROBE_DIR=${CMAKE_CURRENT_BINARY_DIR}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/repository_init.cmake
     )
+    endif()
 
     if(NOT WIN32)
         add_test(
@@ -241,9 +256,22 @@ if(BUILD_TESTING)
         )
     endif()
 
+    if(CPCP_ENABLE_STRESS_TESTS)
+        add_executable(cpcp_stress_tests
+            tests/stress/large_manifest_test.cpp
+        )
+        target_link_libraries(cpcp_stress_tests PRIVATE
+            cpcp_spool
+            Catch2::Catch2WithMain
+        )
+        cpcp_enable_warnings(cpcp_stress_tests)
+        catch_discover_tests(cpcp_stress_tests)
+    endif()
+
     option(CPCP_ENABLE_REFERENCE_TESTS "Enable independent Python recoverer tests" OFF)
+    option(CPCP_ENABLE_STRESS_TESTS "Enable large synthetic manifest stress tests" OFF)
     set(CPCP_PYTHONPATH "" CACHE STRING "Optional PyNaCl module path for reference tests")
-    if(CPCP_ENABLE_REFERENCE_TESTS)
+    if(CPCP_ENABLE_REFERENCE_TESTS AND NOT WIN32)
         find_package(Python3 REQUIRED COMPONENTS Interpreter)
         add_test(
             NAME reference_recoverer

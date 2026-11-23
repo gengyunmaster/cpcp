@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -82,6 +83,9 @@ std::pair<cpcp::crypto::Digest, std::filesystem::path> first_chunk(
     ).value();
     while (true) {
         const auto record = reader.next().value();
+        if (!record.has_value()) {
+            throw std::runtime_error("snapshot has no chunk batch");
+        }
         if (record->type == cpcp::crypto::RecordType::chunk_batch) {
             const auto batch = cpcp::repository::parse_chunk_batch(*record).value();
             const auto id = batch.chunks.front().chunk_id;

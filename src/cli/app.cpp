@@ -6,6 +6,7 @@
 #include "cli/probe_command.hpp"
 #include "cli/recovery_command.hpp"
 #include "cli/errors.hpp"
+#include "platform/cancellation.hpp"
 
 #include <CLI/CLI.hpp>
 
@@ -16,6 +17,11 @@
 namespace cpcp::cli {
 
 int run(int argc, char** argv) {
+    const auto cancellation = platform::install_cancellation_handler();
+    if (!cancellation) {
+        return report_error(cancellation.error());
+    }
+
     CLI::App app{"Encrypted content-addressed backup CLI", "cpcp"};
     app.set_version_flag("--version", "cpcp " CPCP_VERSION);
 

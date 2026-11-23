@@ -6,6 +6,7 @@
 #include "repository/chunk_store.hpp"
 #include "repository/config.hpp"
 #include "platform/lock.hpp"
+#include "platform/cancellation.hpp"
 
 #include <algorithm>
 #include <array>
@@ -117,7 +118,7 @@ std::string display_path(const std::string& path) {
 
 std::uint64_t path_device(const std::filesystem::path& path) {
 #ifdef _WIN32
-    return std::hash<std::string>{}(path.root_path().wstring());
+    return std::hash<std::wstring>{}(path.root_path().wstring());
 #else
     struct stat status {};
     if (stat(path.c_str(), &status) != 0) {
@@ -515,6 +516,10 @@ domain::Result<BackupReport> backup_add(
             }
             std::uint64_t chunk_count = 0;
             while (true) {
+                const auto cancelled = platform::check_cancellation();
+                if (!cancelled) {
+                    return std::unexpected(cancelled.error());
+                }
                 const auto count = read_chunk(*file, buffer);
                 if (!count) {
                     return std::unexpected(count.error());

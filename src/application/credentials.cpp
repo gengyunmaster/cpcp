@@ -111,7 +111,7 @@ domain::Result<crypto::SecretBytes> read_prompt() {
     if (console == INVALID_HANDLE_VALUE || !GetConsoleMode(console, &original)) {
         return std::unexpected(Error{ErrorCode::usage, "password input requires a console or file"});
     }
-    if (!SetConsoleMode(console, original & ~ENABLE_ECHO_INPUT)) {
+    if (!SetConsoleMode(console, original & ~static_cast<DWORD>(ENABLE_ECHO_INPUT))) {
         return std::unexpected(Error{ErrorCode::permanent_io, "cannot disable console echo"});
     }
 #endif

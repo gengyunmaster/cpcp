@@ -4,6 +4,7 @@
 #include "repository/chunk_store.hpp"
 #include "platform/binary_file.hpp"
 #include "platform/lock.hpp"
+#include "platform/cancellation.hpp"
 
 #include <array>
 #include <chrono>
@@ -471,6 +472,10 @@ domain::Result<RestoreReport> restore_snapshot(
                 break;
             }
             for (const auto& chunk : batch->chunks) {
+                const auto cancelled = platform::check_cancellation();
+                if (!cancelled) {
+                    return std::unexpected(cancelled.error());
+                }
                 const repository::ChunkMetadata metadata{
                     chunk.chunk_id,
                     chunk.plaintext_length,

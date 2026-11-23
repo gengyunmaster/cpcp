@@ -255,30 +255,25 @@ domain::Result<FileMetadata> BinaryFile::metadata() const {
     if (!GetFileSizeEx(reinterpret_cast<HANDLE>(handle_), &size)) {
         return std::unexpected(Error{ErrorCode::permanent_io, "GetFileSizeEx failed"});
     }
-    FILE_BASIC_INFO info{};
-    if (!GetFileInformationByHandleEx(
-            reinterpret_cast<HANDLE>(handle_),
-            FileBasicInfo,
-            &info,
-            sizeof(info)
-        )) {
-        return std::unexpected(Error{ErrorCode::permanent_io, "GetFileInformationByHandleEx failed"});
+    BY_HANDLE_FILE_INFORMATION info{};
+    if (!GetFileInformationByHandle(reinterpret_cast<HANDLE>(handle_), &info)) {
+        return std::unexpected(Error{ErrorCode::permanent_io, "GetFileInformationByHandle failed"});
     }
     metadata.size = static_cast<std::uint64_t>(size.QuadPart);
     ULARGE_INTEGER ticks;
-    ticks.LowPart = info.LastWriteTime.dwLowDateTime;
-    ticks.HighPart = info.LastWriteTime.dwHighDateTime;
+    ticks.LowPart = info.ftLastWriteTime.dwLowDateTime;
+    ticks.HighPart = info.ftLastWriteTime.dwHighDateTime;
     constexpr std::uint64_t epoch_seconds = 11644473600ULL;
     constexpr std::uint64_t ticks_per_second = 10000000ULL;
     const auto seconds = ticks.QuadPart / ticks_per_second;
-    metadata.mtime_seconds = static_cast<std::int64_t>(seconds - epoch_seconds);
+    metadata.mtime_seconds = static_cast<std::int64_t>(seconds) - static_cast<std::int64_t>(epoch_seconds);
     metadata.mtime_nanoseconds = static_cast<std::uint32_t>(
         (ticks.QuadPart % ticks_per_second) * 100
     );
-    metadata.device = info.VolumeSerialNumber;
-    metadata.inode = static_cast<std::uint64_t>(info.FileIndex.HighPart) << 32
-        | info.FileIndex.LowPart;
-    metadata.mode = (info.FileAttributes & FILE_ATTRIBUTE_READONLY) ? 0444 : 0666;
+    metadata.device = info.dwVolumeSerialNumber;
+    metadata.inode = static_cast<std::uint64_t>(info.nFileIndexHigh) << 32
+        | info.nFileIndexLow;
+    metadata.mode = (info.dwFileAttributes & FILE_ATTRIBUTE_READONLY) ? 0444 : 0666;
     return metadata;
 #else
     struct stat status {};

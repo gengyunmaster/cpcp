@@ -62,6 +62,11 @@ TEST_CASE("native binary files write flush and read exact bytes") {
     REQUIRE(updater.flush());
     REQUIRE(updater.close());
     REQUIRE(std::filesystem::file_size(path) == 2);
+    REQUIRE(cpcp::platform::set_modification_time(path, -1, 500000000));
+    auto timestamped = BinaryFile::open_read(path).value();
+    const auto metadata = timestamped.metadata().value();
+    REQUIRE(metadata.mtime_seconds == -1);
+    REQUIRE(metadata.mtime_nanoseconds == 500000000);
 }
 
 TEST_CASE("native no-replace publication preserves an existing destination") {

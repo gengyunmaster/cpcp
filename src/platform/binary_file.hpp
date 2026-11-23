@@ -46,6 +46,11 @@ private:
     std::intptr_t handle_ = -1;
 };
 
+domain::Result<void> set_modification_time(
+    const std::filesystem::path& path,
+    std::int64_t seconds,
+    std::uint32_t nanoseconds
+);
 domain::Result<void> sync_directory(const std::filesystem::path& path);
 domain::Result<void> publish_no_replace(
     const std::filesystem::path& temporary,

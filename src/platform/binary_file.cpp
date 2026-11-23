@@ -57,7 +57,7 @@ domain::Result<BinaryFile> BinaryFile::create_new(const std::filesystem::path& p
     HANDLE handle = CreateFileW(
         path.c_str(),
         GENERIC_WRITE,
-        0,
+        FILE_SHARE_READ,
         nullptr,
         CREATE_NEW,
         FILE_ATTRIBUTE_NORMAL,
@@ -371,6 +371,59 @@ domain::Result<FileMetadata> BinaryFile::metadata() const {
     metadata.mode = static_cast<std::uint32_t>(status.st_mode & 07777);
     return metadata;
 #endif
+}
+
+domain::Result<void> set_modification_time(
+    const std::filesystem::path& path,
+    std::int64_t seconds,
+    std::uint32_t nanoseconds
+) {
+    if (nanoseconds > 999999999) {
+        return std::unexpected(Error{ErrorCode::usage, "invalid modification timestamp"});
+    }
+#ifdef _WIN32
+    constexpr std::int64_t epoch_seconds = 11644473600LL;
+    constexpr std::uint64_t ticks_per_second = 10000000ULL;
+    if (seconds < -epoch_seconds || seconds > std::numeric_limits<std::int64_t>::max() - epoch_seconds) {
+        return std::unexpected(Error{ErrorCode::unsupported, "timestamp is outside the NTFS range"});
+    }
+    const auto windows_seconds = static_cast<std::uint64_t>(seconds + epoch_seconds);
+    const auto fractional_ticks = static_cast<std::uint64_t>(nanoseconds / 100);
+    if (windows_seconds > (std::numeric_limits<std::uint64_t>::max() - fractional_ticks) / ticks_per_second) {
+        return std::unexpected(Error{ErrorCode::unsupported, "timestamp is outside the NTFS range"});
+    }
+    const auto ticks = windows_seconds * ticks_per_second + fractional_ticks;
+    HANDLE handle = CreateFileW(
+        path.c_str(),
+        FILE_WRITE_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS,
+        nullptr
+    );
+    if (handle == INVALID_HANDLE_VALUE) {
+        return std::unexpected(Error{ErrorCode::permanent_io, "CreateFileW failed while setting the timestamp"});
+    }
+    FILETIME write_time{};
+    write_time.dwLowDateTime = static_cast<DWORD>(ticks & 0xffffffffULL);
+    write_time.dwHighDateTime = static_cast<DWORD>(ticks >> 32U);
+    const auto succeeded = SetFileTime(handle, nullptr, nullptr, &write_time);
+    const auto error = GetLastError();
+    CloseHandle(handle);
+    if (!succeeded) {
+        return std::unexpected(Error{ErrorCode::permanent_io, "SetFileTime failed with error " + std::to_string(error)});
+    }
+#else
+    timespec times[2]{};
+    times[0].tv_nsec = UTIME_OMIT;
+    times[1].tv_sec = static_cast<time_t>(seconds);
+    times[1].tv_nsec = static_cast<long>(nanoseconds);
+    if (utimensat(AT_FDCWD, path.c_str(), times, AT_SYMLINK_NOFOLLOW) != 0) {
+        return std::unexpected(Error{ErrorCode::permanent_io, native_error(errno)});
+    }
+#endif
+    return {};
 }
 
 domain::Result<void> sync_directory(const std::filesystem::path& path) {

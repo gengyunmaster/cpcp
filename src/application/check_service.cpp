@@ -69,10 +69,9 @@ std::string relative_path(
     const std::filesystem::path& root,
     const std::filesystem::path& path
 ) {
-    std::error_code error;
-    const auto relative = std::filesystem::relative(path, root, error);
-    if (error) {
-        throw std::system_error(error);
+    const auto relative = path.lexically_relative(root);
+    if (relative.empty()) {
+        throw std::invalid_argument("source path cannot be made root-relative");
     }
     for (const auto& component : relative) {
         if (component == "..") {

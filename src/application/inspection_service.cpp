@@ -298,16 +298,11 @@ domain::Result<void> apply_metadata(
         }
     }
 
-    const std::chrono::system_clock::duration elapsed = std::chrono::duration_cast<
-        std::chrono::system_clock::duration
-    >(std::chrono::seconds{seconds} + std::chrono::nanoseconds{nanoseconds});
-    const std::chrono::system_clock::time_point timestamp{elapsed};
-    const auto file_time = std::filesystem::file_time_type::clock::from_sys(timestamp);
-    std::filesystem::last_write_time(path, file_time, error);
-    if (error) {
+    const auto timestamp = platform::set_modification_time(path, seconds, nanoseconds);
+    if (!timestamp) {
         ++warnings;
         if (strict) {
-            return std::unexpected(Error{ErrorCode::source_changed, error.message()});
+            return std::unexpected(Error{ErrorCode::source_changed, timestamp.error().message});
         }
     }
     return {};

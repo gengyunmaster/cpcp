@@ -30,6 +30,7 @@ target_compile_features(cpcp_domain INTERFACE cxx_std_23)
 add_library(cpcp_crypto STATIC
     src/crypto/aead.cpp
     src/crypto/content_id.cpp
+    src/crypto/file_identity.cpp
     src/crypto/keys.cpp
     src/crypto/snapshot_stream.cpp
 )
@@ -60,6 +61,7 @@ if(BUILD_TESTING)
     add_executable(cpcp_unit_tests
         tests/unit/aead_test.cpp
         tests/unit/content_id_test.cpp
+        tests/unit/file_identity_test.cpp
         tests/unit/result_test.cpp
         tests/unit/snapshot_stream_test.cpp
     )

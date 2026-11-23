@@ -18,7 +18,7 @@ The current implementation provides authenticated repository configuration, encr
 - `backup check` with added/missing/type-changed detection, content identities, and repository validation
 - `snapshot list`, `show`, authenticated `ls` / `find`, and full or selective `restore`
 - Bounded JSON and streaming NDJSON snapshot-entry reports
-- Structural and deep `repo verify`
+- Structural and deep `repo verify`, with explicit authenticated validation-cache refresh
 - Quarantine, `repair-summary`, `repair-config`, and `--no-parent` recovery
 - Deterministic volatile/durable filesystem simulation and seeded failures
 - Independent Python reference recovery and cross-implementation vectors

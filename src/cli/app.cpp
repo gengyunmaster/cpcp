@@ -292,10 +292,12 @@ int run(int argc, char** argv) {
 
     auto* verify = repo->add_subcommand("verify", "Verify repository integrity");
     bool deep_verify = false;
+    bool refresh_validation_cache = false;
     verify->add_flag("--deep", deep_verify, "Validate every referenced chunk");
+    verify->add_flag("--refresh-validation-cache", refresh_validation_cache, "Record deep validation evidence for later backups");
     add_inspection_options(verify);
     verify->callback([&] {
-        command_result = run_verify_command(inspection_options, deep_verify);
+        command_result = run_verify_command(inspection_options, deep_verify, refresh_validation_cache);
     });
 
     auto* quarantine = repo->add_subcommand("quarantine", "Quarantine a damaged object");

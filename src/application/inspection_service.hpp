@@ -63,12 +63,15 @@ struct RestoreReport {
 struct VerifyOptions {
     bool deep = false;
     bool repo_read_only = false;
+    bool refresh_validation_cache = false;
 };
 
 struct VerifyReport {
     std::uint64_t snapshots = 0;
     std::uint64_t chunks = 0;
     bool degraded_redundancy = false;
+    bool cache_updated = false;
+    std::string cache_error;
 };
 
 domain::Result<RestoreReport> restore_snapshot(

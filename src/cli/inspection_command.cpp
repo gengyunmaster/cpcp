@@ -234,7 +234,8 @@ int run_restore_command(
 
 int run_verify_command(
     const InspectionCommandOptions& options,
-    bool deep
+    bool deep,
+    bool refresh_validation_cache
 ) {
     auto password = application::read_password(options.config.password_file, !options.config.json);
     if (!password) {
@@ -243,7 +244,7 @@ int run_verify_command(
     auto report = application::verify_repository(
         options.repository,
         *password,
-        application::VerifyOptions{deep, options.repo_read_only}
+        application::VerifyOptions{deep, options.repo_read_only, refresh_validation_cache}
     );
     if (!report) {
         return report_error(report.error());
@@ -256,12 +257,17 @@ int run_verify_command(
             {"chunks", std::to_string(report->chunks)},
             {"deep", deep},
             {"degraded_redundancy", report->degraded_redundancy},
+            {"cache_updated", report->cache_updated},
+            {"cache_error", report->cache_error.empty() ? nlohmann::json(nullptr) : nlohmann::json(report->cache_error)},
         }.dump(2) << '\n';
     } else {
         std::cout << "Verified " << report->snapshots << " snapshots and "
                   << report->chunks << " chunk references\n";
     }
-    return 0;
+    if (!report->cache_error.empty()) {
+        std::cerr << "Warning: validation-cache refresh failed: " << report->cache_error << '\n';
+    }
+    return !report->cache_error.empty() || report->degraded_redundancy ? 3 : 0;
 }
 
 int run_snapshot_browse_command(

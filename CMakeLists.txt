@@ -88,6 +88,7 @@ add_library(cpcp_repository STATIC
     src/repository/snapshot.cpp
     src/repository/snapshot_index.cpp
     src/repository/snapshot_records.cpp
+    src/repository/validation_cache.cpp
 )
 target_link_libraries(cpcp_repository PUBLIC
     cpcp_crypto
@@ -176,6 +177,7 @@ if(BUILD_TESTING)
         tests/integration/browse_service_test.cpp
         tests/integration/check_service_test.cpp
         tests/integration/resume_service_test.cpp
+        tests/integration/validation_cache_test.cpp
     )
     target_link_libraries(cpcp_backup_tests PRIVATE
         cpcp_application

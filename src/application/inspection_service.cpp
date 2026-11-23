@@ -659,6 +659,12 @@ domain::Result<VerifyReport> verify_repository(
     const crypto::SecretBytes& password,
     const VerifyOptions& options
 ) {
+    if (options.refresh_validation_cache && !options.deep) {
+        return std::unexpected(Error{ErrorCode::usage, "--refresh-validation-cache requires --deep"});
+    }
+    if (options.refresh_validation_cache && options.repo_read_only) {
+        return std::unexpected(Error{ErrorCode::usage, "cache refresh is incompatible with --repo-read-only"});
+    }
     auto unlocked = repository::load_config(repository, password);
     if (!unlocked) {
         return std::unexpected(unlocked.error());
@@ -687,6 +693,24 @@ domain::Result<VerifyReport> verify_repository(
         }
         ++report.snapshots;
         report.chunks += *checked;
+    }
+    if (options.refresh_validation_cache) {
+        auto cache_lock = platform::FileLock::acquire(repository / "cache.lock", platform::LockMode::exclusive);
+        if (!cache_lock) {
+            report.cache_error = cache_lock.error().message;
+            return report;
+        }
+        const auto refreshed = repository::ValidationCache::write(
+            repository,
+            unlocked->config,
+            unlocked->master_key,
+            store->validated_objects()
+        );
+        if (!refreshed) {
+            report.cache_error = refreshed.error().message;
+        } else {
+            report.cache_updated = true;
+        }
     }
     return report;
 }

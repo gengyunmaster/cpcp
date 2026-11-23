@@ -27,7 +27,8 @@ int run_restore_command(
 );
 int run_verify_command(
     const InspectionCommandOptions& options,
-    bool deep
+    bool deep,
+    bool refresh_validation_cache
 );
 int run_snapshot_browse_command(
     const InspectionCommandOptions& options,

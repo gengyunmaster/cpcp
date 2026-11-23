@@ -4,6 +4,7 @@
 #include "crypto/keys.hpp"
 #include "domain/result.hpp"
 #include "repository/config.hpp"
+#include "repository/validation_cache.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -35,11 +36,13 @@ public:
     domain::Result<void> validate(const ChunkMetadata& chunk);
     void allow_base_evidence(const crypto::Digest& chunk_id);
     void set_revalidate_all(bool enabled);
+    std::vector<ValidatedObject> validated_objects() const;
 
 private:
     struct CachedCheck {
         std::uint64_t stored_length;
         bool validated = false;
+        bool current_validated = false;
     };
 
     ChunkStore(
@@ -55,6 +58,7 @@ private:
         const ChunkMetadata& chunk
     );
     domain::Result<void> check_metadata(const ChunkMetadata& chunk);
+    bool historical_evidence(const ChunkMetadata& chunk);
 
     std::filesystem::path repository_;
     RepositoryConfig config_;
@@ -62,6 +66,7 @@ private:
     crypto::SecureKey id_key_;
     std::map<std::string, CachedCheck> checks_;
     std::map<std::string, bool> base_evidence_;
+    std::optional<ValidationCache> validation_cache_;
     bool revalidate_all_ = false;
 };
 

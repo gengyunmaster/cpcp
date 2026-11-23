@@ -63,12 +63,17 @@ domain::Result<ChunkStore> ChunkStore::create(
     if (!id_key) {
         return std::unexpected(id_key.error());
     }
-    return ChunkStore(
+    ChunkStore result(
         std::move(repository),
         config,
         std::move(encryption_key).value(),
         std::move(id_key).value()
     );
+    auto cache = ValidationCache::open(result.repository_, config, master_key);
+    if (cache && *cache) {
+        result.validation_cache_.emplace(std::move(**cache));
+    }
+    return result;
 }
 
 ChunkStore::ChunkStore(
@@ -93,6 +98,28 @@ void ChunkStore::allow_base_evidence(const crypto::Digest& chunk_id) {
 
 void ChunkStore::set_revalidate_all(bool enabled) {
     revalidate_all_ = enabled;
+}
+
+bool ChunkStore::historical_evidence(const ChunkMetadata& chunk) {
+    const auto key = crypto::to_hex(chunk.id);
+    if (base_evidence_.contains(key)) {
+        return true;
+    }
+    return validation_cache_ && validation_cache_->contains(chunk.id, chunk.stored_length, 1);
+}
+
+std::vector<ValidatedObject> ChunkStore::validated_objects() const {
+    std::vector<ValidatedObject> result;
+    for (const auto& [hex, check] : checks_) {
+        if (check.current_validated) {
+            result.push_back(ValidatedObject{
+                domain::hex_decode<32>(hex).value(),
+                check.stored_length,
+                1,
+            });
+        }
+    }
+    return result;
 }
 
 domain::Result<void> ChunkStore::check_metadata(const ChunkMetadata& chunk) {
@@ -188,7 +215,7 @@ domain::Result<void> ChunkStore::inspect(const ChunkMetadata& chunk) {
 domain::Result<void> ChunkStore::validate(const ChunkMetadata& chunk) {
     const auto key = crypto::to_hex(chunk.id);
     const auto existing = checks_.find(key);
-    if (existing != checks_.end() && existing->second.validated) {
+    if (existing != checks_.end() && existing->second.current_validated) {
         return {};
     }
     auto metadata = check_metadata(chunk);
@@ -200,6 +227,7 @@ domain::Result<void> ChunkStore::validate(const ChunkMetadata& chunk) {
         return std::unexpected(plaintext.error());
     }
     checks_[key].validated = true;
+    checks_[key].current_validated = true;
     return {};
 }
 
@@ -215,7 +243,7 @@ domain::Result<ChunkMetadata> ChunkStore::reuse(const crypto::ChunkDescriptor& d
         return std::unexpected(metadata.error());
     }
     const auto key = crypto::to_hex(chunk.id);
-    if (revalidate_all_ || !base_evidence_.contains(key)) {
+    if (revalidate_all_ || !historical_evidence(chunk)) {
         const auto validated = validate(chunk);
         if (!validated) {
             return std::unexpected(validated.error());
@@ -251,7 +279,7 @@ domain::Result<ChunkMetadata> ChunkStore::put(std::span<const std::byte> plainte
     };
     const auto key = crypto::to_hex(*id);
     const auto cached = checks_.find(key);
-    if (cached != checks_.end() && cached->second.validated) {
+    if (cached != checks_.end() && cached->second.current_validated) {
         chunk.already_present = true;
         return chunk;
     }
@@ -262,7 +290,7 @@ domain::Result<ChunkMetadata> ChunkStore::put(std::span<const std::byte> plainte
         if (!metadata) {
             return std::unexpected(metadata.error());
         }
-        if (!revalidate_all_ && base_evidence_.contains(key)) {
+        if (!revalidate_all_ && historical_evidence(chunk)) {
             checks_[key].validated = true;
         } else {
             auto validated = validate(chunk);
@@ -351,7 +379,7 @@ domain::Result<ChunkMetadata> ChunkStore::put(std::span<const std::byte> plainte
         }
         current = current.parent_path();
     }
-    checks_[key] = CachedCheck{chunk.stored_length, true};
+    checks_[key] = CachedCheck{chunk.stored_length, true, true};
     return chunk;
 }
 

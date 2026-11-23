@@ -97,6 +97,9 @@ Precise terms prevent the interface from promising more than was checked.
 | Session | One resumable backup operation and its journal |
 | Published | Atomically made visible under its final repository name after the required write protocol |
 | Verified | Read back and successfully subjected to the checks explicitly named by the command |
+| Verification evidence | A current-session validation result or authenticated historical result accepted under the selected policy |
+| Storage epoch | A random logical storage generation used to invalidate historical verification evidence after explicit storage replacement or recovery |
+| Provisional snapshot data | Records parsed from individually authenticated frames but not yet committed by the stream's authenticated final record |
 | Complete snapshot | A snapshot in which every planned entry was captured without a detected source or repository error |
 | Partial snapshot | An explicitly marked snapshot containing only the successfully captured subset and an authenticated failure report |
 
@@ -143,10 +146,10 @@ Content IDs are keyed so that an offline reader cannot simply hash a known candi
 The implementation and tests must enforce these invariants within the stated fault model:
 
 - **R1: immutable published objects.** cpcp never modifies a published chunk or snapshot in place.
-- **R2: verified references.** Before a snapshot is published, every newly referenced chunk must have passed the chunk validation protocol during that backup session, including chunks reused through deduplication.
-- **R3: atomic snapshot publication.** A snapshot becomes visible under its final name only after its complete encrypted object has been written and verified.
+- **R2: evidence-backed references.** Before a snapshot is published, every distinct referenced chunk must either have passed the chunk validation protocol during the current session or be covered by prior authenticated verification evidence accepted by the selected policy. Every object without acceptable evidence must be fully validated before use.
+- **R3: atomic snapshot publication.** A snapshot becomes visible under its final name only after its complete encrypted stream, including its authenticated final frame, has been written and verified.
 - **R4: interruption containment.** An interrupted operation must not alter an existing snapshot. New temporary files, journals, or unreachable objects may remain and can be dealt with safely.
-- **R5: optimistic state is never authoritative.** Journals, caches, scan indexes, and lock metadata are performance aids. Their loss may cause more work but must not turn invalid data into a valid backup.
+- **R5: optimistic state is disposable.** Journals, validation caches, scan indexes, and lock metadata are performance aids. Losing them may cause more work but must not turn invalid data into a valid backup. A cache entry is evidence of an earlier check, never proof of current storage health.
 - **R6: verified restoration.** cpcp does not publish a restored file under its final name until its complete reconstructed plaintext passes the expected content verification.
 - **R7: guarded deletion.** Garbage collection requires an exclusive repository lock and a two-phase deletion protocol.
 
@@ -165,13 +168,48 @@ If some entries fail:
 
 An explicit `--allow-partial` option permits publication of a snapshot marked `partial`. A partial snapshot must contain an authenticated list of omitted or failed entries, must be visibly identified by listing and restore commands, and still results in a nonzero partial-failure exit code.
 
+A successful backup is not a new deep verification of the entire repository. Its report must state the verification policy, the number of distinct objects validated in the current session, and the number accepted from prior evidence.
+
 A crash after snapshot publication but before the command prints its result can leave the outcome unknown to the caller. The repository must nevertheless be valid, and `snapshot list` must allow the user to determine whether publication occurred.
 
 ### 6.3 No silent fallback
 
-If the apparently newest snapshot is malformed, fails authentication, has a duplicate generation, or has invalid references, commands must report an integrity error. They must not silently select an older snapshot and present the repository as healthy.
+If the apparently newest snapshot is malformed, fails authentication, has a duplicate generation, has an incomplete encrypted stream, or has invalid references, commands must report an integrity error. They must not silently select an older snapshot and present the repository as healthy.
 
 Read-only commands may still support an explicit diagnostic mode for inspecting older valid snapshots, but that mode must display the integrity failure prominently.
+
+### 6.4 Verification evidence and caching
+
+The standard backup policy accepts these forms of evidence for a distinct chunk:
+
+1. successful writing and validation during the current session;
+2. successful full validation of an existing object during the current session;
+3. prior introduction into an authenticated snapshot under the same repository UUID and storage epoch, relying inductively on R2;
+4. an acceptable authenticated cross-session validation-cache entry under the same repository UUID and storage epoch.
+
+An object found only in temporary space, a journal, or an unreachable orphaned object has no snapshot-based evidence and must be fully validated before reuse. A new reference to an already established object is not the same as introducing an unverified object into the repository.
+
+An **in-memory per-session validation cache is mandatory**. Every distinct object is validated at most once per session, even when many files reference it. The cache key includes at least the repository UUID, storage epoch, chunk ID, and object format version. It contains no DEKs or plaintext.
+
+Cross-session validation caches are optional, authenticated, and disposable. A cache entry records at least:
+
+- schema and verifier versions;
+- repository UUID and storage epoch;
+- chunk ID and object format version;
+- verification time;
+- an authentication tag from a dedicated cache-authentication key.
+
+Invalid entries must never be used. Deleting the entire cache only causes revalidation. Authentication prevents an attacker without the key from creating new entries, but does not prevent replay of old valid entries.
+
+`verified_at` is an informational wall-clock timestamp, not a freshness proof. A storage epoch is a random logical generation changed by an explicit storage-replacement or recovery operation; it is not a trustworthy device serial number and cannot detect an attacker rolling back both configuration and cache. Epoch mismatch invalidates prior evidence and causes revalidation. Cache expiration is a verification policy, not a guarantee that an unexpired object remains healthy.
+
+`backup add --revalidate-all` ignores prior snapshots and cross-session caches and fully reads and validates every distinct chunk referenced by the new snapshot once in the current session. `backup add --full-source-read` independently disables metadata-only incremental source skipping. These flags provide explicit full-read fallbacks without an ambiguous `--paranoid` assurance claim. Neither option proves correct source-device reads, physical persistence, or continued health after the command finishes.
+
+### 6.5 Incremental complexity
+
+Under the standard policy and after incremental source scanning is implemented, source-content reads are proportional to changed content, and repository-object reads are proportional to new objects or objects lacking acceptable evidence. Metadata scanning of the source tree remains necessary unless a trusted external change journal is introduced.
+
+The initial snapshot design still writes every entry in every snapshot. Snapshot encryption and metadata output therefore remain O(total entry count), even when unchanged file content is neither reread nor revalidated. Reducing that metadata cost requires reusable manifest segments or a persistent authenticated index and is not claimed by the initial format.
 
 ## 7. Repository model
 
@@ -189,12 +227,14 @@ The initial layout is:
     <zero-padded-generation>-<uuid>.snap
   sessions/
     <session-uuid>.journal
+  cache/
+    validation-<storage-epoch>.cache
   tmp/
     <session-uuid>-<sequence>.part
   trash/
 ```
 
-`trash/` is used once deletion and garbage collection are implemented. It is not required for the first append-only release.
+`trash/` is used once deletion and garbage collection are implemented. It is not required for the first append-only release. `cache/` is disposable and may be absent or removed between invocations; prior snapshot evidence remains available without it.
 
 There is no mutable `current` pointer. The latest snapshot is derived from authenticated snapshot metadata, not trusted from a filename alone.
 
@@ -215,17 +255,19 @@ Mutating operations use an exclusive operating-system-backed lock. Read-only ope
 
 - a magic value and repository-format version;
 - a randomly generated repository UUID;
+- a random storage epoch used to namespace verification evidence;
 - creation time and cpcp version for diagnostics;
 - the fixed chunk size and content-ID algorithm;
 - the authenticated-encryption suite;
 - password key slots, each with its own Argon2id parameters, salt, wrapped master key, and nonce;
-- future recovery-key slots using the same versioned envelope model.
+- future recovery-key slots using the same versioned envelope model;
+- a configuration authentication tag covering the canonical security-relevant configuration, including the storage epoch and key slots.
 
-The chunk size, repository UUID, and content-ID algorithm are immutable after initialization. A format migration creates a new format version rather than silently changing these assumptions.
+The chunk size, repository UUID, and content-ID algorithm are immutable after initialization. The storage epoch changes only through an explicit storage-replacement or recovery operation that updates the authenticated configuration and invalidates prior verification evidence. Epoch rotation does not change object encryption and does not require rewrapping every key slot. A format migration creates a new format version rather than silently changing these assumptions.
 
 Configuration is plaintext because some of it is needed before a password can be processed, but it is not trusted. Parsing must enforce file-size, nesting, numeric-range, and KDF resource limits before expensive allocation or password derivation.
 
-The master-key wrapping AAD binds the repository UUID, format version, key-slot identifier and type, KDF algorithm, KDF parameters, and salt. These values must be encoded with a specified canonical binary encoding; cryptographic authentication must not depend on JSON whitespace or property order.
+The master-key wrapping AAD binds the repository UUID, format version, key-slot identifier and type, KDF algorithm, KDF parameters, and salt. After unlocking the master key, cpcp verifies the configuration authentication tag with a dedicated derived key before trusting the storage epoch, chunking parameters, or other bound fields. These values must be encoded with a specified canonical binary encoding; cryptographic authentication must not depend on JSON whitespace or property order.
 
 No separate key-check ciphertext is needed. Successful authenticated unwrapping of the master key already validates the password and bound configuration fields. A wrong password and a tampered key slot may be indistinguishable and are reported as an authentication failure without claiming which occurred.
 
@@ -238,8 +280,9 @@ Replacing the entire configuration with an older valid copy remains a rollback a
 Version 1 uses libsodium for the cryptographic implementation:
 
 - **Argon2id** for password-based key derivation;
-- **XChaCha20-Poly1305** for authenticated encryption;
-- **HMAC-SHA-256** with domain separation for chunk and file content IDs;
+- **XChaCha20-Poly1305** for bounded single-message authenticated encryption;
+- **`crypto_secretstream_xchacha20poly1305`** for framed snapshot streams;
+- **HMAC-SHA-256** with domain separation for content IDs, configuration authentication, validation-cache authentication, and context-bound stream-key derivation;
 - **libsodium subkey derivation** with distinct contexts for master-key purposes;
 - **the operating-system CSPRNG through libsodium** for keys, salts, nonces, and identifiers.
 
@@ -261,14 +304,26 @@ password
 MK
   -> subkey derivation, wrapping context -> K_wrap
   -> subkey derivation, content-ID context -> K_id
+  -> subkey derivation, configuration-authentication context -> K_config
+  -> subkey derivation, validation-cache-authentication context -> K_cache
 
-Each encrypted object
+Each bounded encrypted object
   -> fresh random 256-bit data-encryption key (DEK)
   -> DEK wrapped with K_wrap
   -> payload encrypted with the DEK and a fresh random 192-bit nonce
+
+Each snapshot stream
+  -> fresh random 256-bit DEK wrapped with K_wrap
+  -> HMAC-SHA-256-based context KDF(DEK, canonical snapshot context)
+  -> context-bound stream key
+  -> crypto_secretstream_xchacha20poly1305 with a fresh random stream header
 ```
 
-A password change only creates a new wrapping of the same MK. It does not rewrite chunks or snapshots.
+`repo passwd` replaces the password slot used to authenticate the command by default. It generates a new salt, KEK, and wrapping nonce while preserving the same MK and all other key slots. Adding another password or removing a different slot requires a separate explicit key-slot operation; it is never a hidden side effect of `passwd`.
+
+The updated configuration, including its new configuration authentication tag, is atomically published so that a crash leaves either the old or new valid configuration. After a successful replacement, the old password no longer unlocks the updated configuration unless another slot still uses it.
+
+This is not cryptographic revocation. A running process may retain the unlocked MK, and anyone possessing an old configuration copy can use its old password slot to recover the same MK and decrypt current objects. A compromised old password or MK therefore requires master-key rotation, initially by creating a new repository with new keys and re-encrypting the data. Password-change documentation must state this limitation explicitly.
 
 Key slots allow later recovery-key support without changing the data-encryption design. Recovery keys must be high-entropy random values, displayed only when explicitly requested, and intended for offline storage.
 
@@ -296,16 +351,25 @@ Chunk IDs provide deduplication and an expected plaintext identity. They do not 
 
 ### 8.4 Authenticated context
 
-Every payload and wrapped DEK uses AAD that binds at least:
+For bounded single-message objects, every payload and wrapped DEK uses AAD that binds at least:
 
 - repository UUID;
 - object type and format version;
 - object identity, such as chunk ID or snapshot UUID;
+- storage epoch for epoch-specific objects such as snapshots and validation caches;
 - snapshot generation and parent identity where applicable;
 - journal session UUID and record sequence where applicable;
 - plaintext length and content-encoding flags where applicable.
 
-This prevents valid objects from being transplanted into a different repository or context without detection. It does not prevent deletion or rollback of an entire valid state.
+`crypto_secretstream_xchacha20poly1305` does not accept external AAD for individual messages. Snapshot streams therefore bind the same canonical context through three mechanisms:
+
+1. the wrapped DEK uses the canonical context in its wrapping AAD;
+2. the secretstream key is derived from the DEK and the canonical context with the specified HMAC-SHA-256-based KDF;
+3. the first stream message contains the canonical context, which must exactly match the expected values.
+
+Writing context into an unauthenticated header alone is not context binding. The exact KDF and canonical context encoding are part of the format specification. Secretstream supplies chained frame authentication and a `FINAL` tag; the final application record additionally commits to the frame count, logical plaintext length, and whole-manifest commitment. Missing `FINAL`, extra frames after `FINAL`, count mismatches, or commitment mismatches are integrity failures.
+
+This design prevents valid objects from being transplanted into a different repository or context without detection. It does not prevent deletion or rollback of an entire valid state.
 
 ### 8.5 Password handling and key memory
 
@@ -328,13 +392,12 @@ Chunks, snapshots, and journal records use versioned envelopes with:
 - a fixed binary magic and version;
 - explicit flags and bounded length fields;
 - a wrapped DEK and its nonce and authentication tag;
-- a payload nonce;
-- ciphertext and its authentication tag;
-- the context required to reconstruct AAD exactly.
+- the context required to reconstruct authenticated context exactly;
+- either a single-message payload nonce, ciphertext, and authentication tag, or a secretstream header followed by bounded encrypted frames.
 
-Headers need not be secret, but every security-relevant header field must be authenticated. Parsers must reject inconsistent lengths, unsupported versions, excessive allocations, trailing data, and non-canonical values where the format requires canonical encoding.
+Headers need not be secret, but every security-relevant header field must be authenticated directly or through the context-bound stream key. Parsers must reject inconsistent lengths, unsupported versions, excessive allocations, trailing data, and non-canonical values where the format requires canonical encoding.
 
-The disk format uses fixed-width integer fields with an explicitly defined byte order. Native C++ struct layout must never be written directly to disk.
+A frame length must be checked against the format limit before allocation or reading the frame body. Snapshot parsing must not allocate space proportional to the total snapshot or referenced file size. The disk format uses fixed-width integer fields with an explicitly defined byte order. Native C++ struct layout must never be written directly to disk.
 
 ### 9.2 Chunk objects
 
@@ -353,21 +416,41 @@ A matching filename or a valid authentication tag alone is insufficient to estab
 
 ### 9.3 Snapshot objects
 
-Snapshots use the common encrypted envelope. The initial plaintext payload is strict, size-bounded JSON to ease review and debugging. A later binary representation requires a new format or payload version and migration tooling.
+Snapshots are framed `crypto_secretstream_xchacha20poly1305` streams, not single-message AEAD objects. A whole-snapshot ciphertext is never buffered solely to obtain one authentication tag. Each frame has a format-defined maximum plaintext and ciphertext size and carries a bounded set of logical records.
 
-A snapshot contains:
+The logical stream contains, in order:
+
+1. a canonical context record;
+2. a small snapshot-header record;
+3. root records;
+4. bounded entry-batch records;
+5. bounded failure-batch records for a partial snapshot;
+6. a final summary record carrying `TAG_FINAL`, frame count, logical plaintext length, and the whole-manifest commitment.
+
+The initial record payloads use strict JSON to ease review and debugging, but each batch is parsed independently with bounded memory. A snapshot is not one large JSON document and must not be loaded into a JSON DOM. A later binary record representation requires a new format or payload version and migration tooling.
+
+A frame is passed to the record parser only after its own secretstream authentication succeeds. Parsed records remain **provisional** until the final frame, whole-manifest commitment, and semantic validation complete. Before that point, they must not select a snapshot for normal use, publish another snapshot, restore files, or cause other external side effects. Implementations may process or spool provisional records only through bounded, explicitly temporary state.
+
+This gives snapshot parsing O(frame size + batch size + operation-specific index) memory rather than O(total snapshot size). Secretstream authenticates frame order and continuation; the final application commitment binds the complete logical manifest. The exact commitment algorithm is part of the format specification.
+
+A snapshot header contains:
 
 - schema and format versions;
-- repository UUID, snapshot UUID, and generation;
+- repository UUID, storage epoch, snapshot UUID, and generation;
 - parent UUID and parent encrypted-object hash when a parent exists;
 - creation time, tool version, and optional user tag;
 - `complete` or `partial` status;
-- source roots and their platform information;
-- entries for directories and regular files;
-- an authenticated failure list for partial snapshots;
-- summary statistics.
+- the verification policy and counts of objects validated in the current session or accepted from prior evidence;
+- summary statistics, repeated and authenticated in the final summary record.
 
-Each regular-file entry contains:
+Each root record contains:
+
+- a snapshot-local root index;
+- a stable root UUID;
+- a unique display label safe for use as one destination path component;
+- the original absolute source path and platform information.
+
+Entries describe directories and regular files. Each regular-file entry contains:
 
 - root index and repository-relative path;
 - type, plaintext size, and supported metadata;
@@ -414,7 +497,7 @@ All new immutable objects follow the same sequence on the repository filesystem:
 write a uniquely named file under tmp/
   -> flush file data and metadata to storage
   -> close and reopen or otherwise read back the complete object
-  -> authenticate, decode, and verify the expected plaintext identity
+  -> authenticate, decode, and verify the chunk content ID or snapshot FINAL and manifest commitment
   -> publish with an atomic no-replace operation
   -> flush every affected parent directory
   -> record publication in the journal when applicable
@@ -428,7 +511,31 @@ Read-back may still be served from caches and therefore cannot prove that hardwa
 
 A flush or write failure invalidates the current temporary object. Retrying the same flush after an error is not sufficient; the implementation must follow platform semantics and rewrite the temporary object when required.
 
-### 10.2 Backup workflow
+### 10.2 Platform durability contract
+
+The repository-format specification and the platform durability contract are separate normative artifacts. Before native storage backends are considered reliable, M0 must produce `docs/PLATFORM_DURABILITY.md` with one entry for each operation, operating system, filesystem, and tested storage class.
+
+Each entry must record:
+
+| Field | Required content |
+| --- | --- |
+| Operation | Temporary-file flush, immutable publication, directory-entry persistence, configuration replacement, read-back, or disconnect handling |
+| Environment | Operating-system and kernel version, filesystem, mount options where relevant, and local/USB/network storage class |
+| API sequence | Exact native calls, flags, handle types, ordering, and error handling |
+| Assumed contract | Atomicity, no-replace, flush, directory-entry, and error semantics required from the platform |
+| Verification method | Simulator scenario, native conformance test, forced crash, or manual power-loss procedure |
+| Observed result | Tested result and date, clearly distinguished from an untested assumption |
+| Limitations | Filesystems, devices, and failure modes for which no equivalent guarantee is claimed |
+
+Initial platform requirements are design intent, not measured results:
+
+- **Linux:** specify file and parent-directory `fsync` requirements, select an atomic no-replace publication mechanism supported by the target filesystem, and test at least the declared supported local filesystems. Do not infer identical behavior on every mount or network filesystem.
+- **macOS:** specify where `F_FULLFSYNC` is required and test atomic publication and directory-entry behavior explicitly on APFS. POSIX-looking APIs alone are not evidence of equivalent durability.
+- **Windows:** specify `FlushFileBuffers` and atomic no-replace or replacement sequences with their write-through behavior. Do not invent an equivalent of POSIX directory `fsync`; record exactly which NTFS guarantees are relied upon and which directory-entry persistence questions remain.
+
+A simulator verifies that cpcp invokes operations in the required order and handles their modeled failures. It cannot establish real filesystem or device durability. Native conformance tests and documented crash tests remain necessary. Unsupported or untested configurations must not be described as providing the same durability assurance as tested ones.
+
+### 10.3 Backup workflow
 
 `backup add` performs the following steps:
 
@@ -436,8 +543,8 @@ A flush or write failure invalidates the current temporary object. Retrying the 
 2. Build an explicit plan from the requested roots and exclusion rules. Do not follow symbolic links by default.
 3. Open each source file before reading identity metadata from that same handle to reduce path-replacement races.
 4. Stream fixed-size chunks, computing chunk IDs and the whole-file content ID from the bytes actually read.
-5. For each chunk, either fully validate an existing deduplication target or encrypt and publish a new object using the immutable-object protocol.
-6. Append and flush the corresponding journal record only after the chunk has been published or validated for reuse.
+5. For each chunk, obtain current-session or acceptable prior verification evidence under the selected policy. Fully validate every existing object without acceptable evidence; otherwise encrypt and publish a new object using the immutable-object protocol.
+6. Append and flush the corresponding journal record after the chunk has been published, validated for reuse, or accepted under the standard prior-evidence policy. Record which assurance was used.
 7. After finishing the file, compare source identity and change indicators from the open handle. A detected change invalidates that file capture and causes a bounded retry or a reported failure.
 8. Construct a snapshot only from file captures that completed without detected errors.
 9. Publish the complete snapshot, or a marked partial snapshot only when `--allow-partial` was supplied.
@@ -445,7 +552,7 @@ A flush or write failure invalidates the current temporary object. Retrying the 
 
 Pre- and post-read metadata comparisons improve detection but do not make a changing file inherently consistent. For important active data, users should quiesce the application or use an operating-system snapshot. cpcp must not describe such backups as application-consistent.
 
-### 10.3 Resume behavior
+### 10.4 Resume behavior
 
 The unit of retransmission is one chunk. An unfinished temporary chunk is discarded; a previously published chunk can be validated and reused.
 
@@ -454,19 +561,19 @@ Resume must:
 - identify the exact session and original source roots;
 - reject ambiguous sessions rather than guessing;
 - re-establish source file identity before trusting skipped ranges;
-- validate every reused object required by the new snapshot;
+- establish current-session or acceptable prior verification evidence for every distinct object required by the new snapshot, according to the selected policy;
 - seek to known chunk boundaries when the journal and source checks permit it;
 - restart a file or the full scan when identity checks are inconclusive.
 
 Chunk-level resume avoids serializing cipher and hash states and bounds the work lost at an interruption. The goal is to avoid unnecessary source reads, not to guarantee that every source byte is read exactly once under all failure conditions.
 
-### 10.4 Cancellation
+### 10.5 Cancellation
 
 `Ctrl-C` sets an atomic notification flag through a platform-appropriate mechanism. The main loop stops at a chunk boundary, leaves previously published objects intact, preserves useful journal state, removes the active temporary file when safe, and returns exit code 130.
 
 Signal handlers and console-control handlers must not perform allocation, logging, filesystem operations, or cryptographic work.
 
-### 10.5 Garbage collection
+### 10.6 Garbage collection
 
 When deletion is introduced:
 
@@ -477,7 +584,7 @@ When deletion is introduced:
 5. delete only after a grace period and a subsequent explicit collection step;
 6. never collect objects associated with an active or incomplete session unless reachability rules prove them safe to remove.
 
-Verification is read-only. It must not silently move objects to `trash/` or rename damaged data. Recovery and quarantine operations require separate explicit commands and dry-run output.
+Verification never changes chunks or snapshots and must not silently move objects to `trash/` or rename damaged data. The only permitted write is an explicitly requested disposable validation-cache update. Recovery and quarantine operations require separate explicit commands and dry-run output.
 
 ## 11. Checking, verification, and restoration
 
@@ -513,19 +620,29 @@ The human output and JSON report must state the selected snapshot, its complete 
 The default verification level checks:
 
 - configuration and key-slot consistency after authentication;
-- snapshot envelope authentication and schema validity;
+- complete snapshot stream authentication, including `FINAL`, whole-manifest commitment, and schema validity;
 - duplicate or inconsistent generations;
 - available parent-link consistency;
 - presence and basic structural validity of referenced chunks;
 - session and temporary-state classification without modifying it.
 
-`repo verify --deep` additionally reads, authenticates, decodes, and recomputes content IDs for every chunk reachable from retained snapshots. Its report states exactly which snapshots and objects were checked. Orphan detection is reported separately from corruption.
+`repo verify --deep` additionally reads, authenticates, decodes, and recomputes content IDs for every distinct chunk reachable from retained snapshots, bypassing prior validation evidence. Its report states exactly which snapshots and objects were checked. Orphan detection is reported separately from corruption.
+
+Verification never changes chunks or snapshots. It is read-only by default. `--refresh-validation-cache` explicitly records successful results in the disposable cache for the current storage epoch; cache failure does not invalidate an otherwise successful verification and is reported separately.
 
 Any integrity failure returns exit code 4. Verification never repairs, deletes, or quarantines data implicitly.
 
 Deep verification detects corruption observed while it runs; it cannot guarantee that storage will remain healthy afterward. Periodic verification and independent restore tests are therefore operational requirements, not optional marketing features.
 
 ### 11.3 Restoration
+
+**Snapshot selection.** `latest` resolves to the highest valid authenticated generation, including a partial snapshot. Inspection commands may display that snapshot with a prominent partial marker. `snapshot restore` refuses any partial snapshot unless `--allow-partial` is explicitly supplied, whether it was selected by generation or by `latest`. It never falls back to an older complete snapshot implicitly.
+
+`latest-complete` is an explicit selector for the highest complete generation. A malformed, unauthenticated, or incomplete newest stream produces an integrity error rather than fallback for either selector. Check commands may compare against a partial snapshot, but their reports must identify it and must not claim whole-root completeness.
+
+**Root-qualified mapping.** `snapshot show` lists every root's snapshot-local index, stable UUID, display label, and original absolute path. Selective multi-root restoration uses `--root <index-or-label> --path <relative-path>`. A bare relative path is accepted only for a single-root snapshot; cpcp does not guess based on the currently unique result of a path lookup.
+
+By default, restored entries are placed under `DEST/<root-label>/<relative-path>` for both full and selective restores. `--strip-root` removes the label component only when the resulting mapping is explicitly selected and collision-free. Original absolute source paths are metadata, never default restore destinations.
 
 `snapshot restore` uses a per-file safe publication protocol:
 
@@ -573,7 +690,24 @@ cpcp does not promise universal metadata preservation. Filesystem metadata diffe
 | Symbolic links | Not followed initially; explicit backup and restore support comes after regular files are stable |
 | NTFS alternate data streams, macOS resource forks, sparse layout | Later work; file content support must not be conflated with preserving these features |
 
-Timestamps use signed, fixed-width values with defined units and explicit unavailable markers. Restoring with lower target-filesystem precision is allowed when reported under strict metadata checking.
+### 12.3 Timestamp encoding
+
+Every persisted timestamp uses Unix time semantics and a normalized two-field representation:
+
+```text
+seconds:     signed 64-bit integer
+nanoseconds: unsigned 32-bit integer in the range 0..999,999,999
+```
+
+The represented UTC instant is `seconds + nanoseconds / 1,000,000,000` relative to `1970-01-01T00:00:00Z`. Leap seconds are not separately encoded. This representation avoids the approximately 1678–2262 range limit of a single signed 64-bit total-nanoseconds value and covers the valid NTFS range.
+
+Negative timestamps have one canonical representation. For example, half a second before the epoch is `seconds = -1, nanoseconds = 500000000`. An unavailable timestamp uses an explicit presence marker or `null`; zero always means the epoch and never means unknown.
+
+Conversions from NTFS 100-nanosecond ticks and APFS or ext4 nanosecond timestamps must be exact when the source value is representable. The source epoch and conversion arithmetic are fixed in the format specification. Human-readable output uses RFC 3339 with up to nine fractional digits, but display formatting is not the disk encoding.
+
+When a target filesystem cannot represent a value or its precision, cpcp preserves an exact value where possible and otherwise rounds down to the nearest representable target tick according to the normalized timestamp definition. Strict metadata mode reports the adjustment. Local time zones and locale calendars never affect the stored value.
+
+Wall-clock timestamps in validation caches are informational and do not establish freshness. Monotonic clocks may drive timeouts within a running process but are never serialized as persistent timestamps.
 
 ## 13. Command-line interface
 
@@ -633,6 +767,7 @@ cpcp repo passwd
 cpcp backup add ~/Documents ~/Photos --repo /mnt/backup/cpcp --tag weekly
 cpcp backup add /data --dry-run
 cpcp backup add /data --allow-partial --json
+cpcp backup add /data --full-source-read --revalidate-all
 cpcp backup status --json
 cpcp backup resume <session-id>
 cpcp backup resume <session-id> --restart-files
@@ -648,15 +783,18 @@ cpcp snapshot list --json
 cpcp snapshot show 7
 cpcp snapshot diff 6 7 --json
 
-# Restore without implicit overwriting
+# Restore without implicit overwriting or partial-snapshot fallback
 cpcp snapshot restore latest --to ./restored --dry-run
-cpcp snapshot restore 7 Documents/a.txt --to ./restored
+cpcp snapshot restore latest-complete --to ./restored
+cpcp snapshot restore latest --to ./restored --allow-partial
+cpcp snapshot restore 7 --root 0 --path Documents/a.txt --to ./restored
 cpcp snapshot restore 7 --to ./restored --strict-metadata
 cpcp snapshot restore 7 --to ./restored --overwrite --yes
 
 # Verify and maintain
 cpcp repo verify --json
 cpcp repo verify --deep --json
+cpcp repo verify --deep --refresh-validation-cache --json
 cpcp repo stats --json
 cpcp snapshot forget 3 --dry-run
 cpcp snapshot forget 3 --yes
@@ -681,6 +819,7 @@ Every machine-readable document includes a schema identifier such as:
   },
   "files": [
     {
+      "root": 0,
       "path": "Documents/a.txt",
       "status": "verified"
     }
@@ -702,9 +841,9 @@ Likely dependencies are:
 
 | Dependency | Purpose |
 | --- | --- |
-| libsodium | Password derivation, authenticated encryption, content authentication primitives, random generation, secure memory |
+| libsodium | Password derivation, bounded and streamed authenticated encryption, content and configuration authentication, random generation, secure memory |
 | CLI11 | Command-line parsing |
-| nlohmann/json | Bounded configuration, snapshot, and report serialization |
+| nlohmann/json | Bounded configuration, snapshot record batches, and report serialization |
 | Catch2 | Unit and component tests |
 | zstd | Optional per-chunk compression in a later milestone |
 
@@ -722,28 +861,69 @@ src/
   domain/
     repository model, snapshot model, content IDs, error taxonomy, invariants
   repository/
-    object envelopes, config, journals, commit protocol, locking, garbage collection
+    object envelopes, framed snapshot streams, config, journals, validation caches,
+    commit protocol, locking, garbage collection
   crypto/
     libsodium-backed key derivation, wrapping, encryption, hashing, secure buffers
   platform/
     native handles, durable writes, atomic publication, directory sync, terminal input
   storage/
-    local-filesystem object access and future backend boundaries
+    narrow storage contract shared by native and simulated implementations
 tests/
   unit/
   integration/
+  simulation/
   fault_injection/
   fuzz/
   compatibility/
+tools/
+  reference-recoverer/
+    independent read-only Python recovery implementation
 ```
 
 The CLI maps arguments to application requests and formats results. It does not implement repository or cryptographic logic.
 
-Pure planning and validation logic is separated from execution. Native I/O and failure injection share narrow interfaces so that tests can fail individual operations without changing production protocols.
+Pure planning and validation logic is separated from execution. Native and simulated I/O share the same narrow interfaces so that tests can fail individual operations and model persistence boundaries without changing production protocols.
 
 A future storage interface must not weaken local-filesystem guarantees. Remote backends have different atomicity, consistency, and listing semantics and require their own design rather than an assumed drop-in replacement.
 
-### 14.3 Error model
+### 14.3 Simulated storage and persistence
+
+M0 includes a deterministic simulated filesystem before the production commit protocol is considered complete. It implements only the narrow operations used by cpcp; it is not a general POSIX reimplementation.
+
+The simulator maintains separate volatile and durable views and supports configurable models for:
+
+- visibility and persistence of file data, metadata, and directory entries;
+- atomic no-replace publication and mutable configuration replacement;
+- persistence reordering and crashes between adjacent protocol operations;
+- torn writes, short reads and writes, and failed or ignored flushes;
+- EIO, ENOSPC, permission loss, read-only state, and source or repository disconnects;
+- source-file mutation and stale identity metadata;
+- independent source and repository devices with different failure schedules.
+
+Small operation sequences can be exhaustively enumerated. Larger schedules use recorded random seeds and must be exactly reproducible. Assertions check R1–R7 after every modeled crash and recovery step, and any counterexample is minimized or preserved as a regression test.
+
+These checks establish properties only under the simulator's stated persistence model. They do not validate native API assumptions, filesystem conformance, hardware behavior, operating-system locking, or real path races. Native tests remain mandatory.
+
+### 14.4 Independent reference recoverer
+
+M1 includes a narrow, read-only Python reference recoverer under `tools/reference-recoverer/`. It is implemented from the published format specification and uses an audited libsodium binding rather than cpcp's C++ reader.
+
+Its initial scope is limited to:
+
+- bounded configuration parsing and repository unlocking;
+- framed snapshot authentication through `FINAL` and manifest commitment validation;
+- chunk authentication, content-ID verification, and whole-file reconstruction;
+- regular files, directories, and baseline metadata;
+- safe destination mapping and refusal to overwrite by default.
+
+It never writes to a repository, updates validation caches, resumes sessions, or performs garbage collection. It is not a dependency of the normal cpcp build or installation.
+
+The recoverer exposes under-specified format details and reduces dependence on a bug-compatible C++ writer and reader. Two implementations by the same author are not an independent security audit and do not prove the specification complete. Python also has weaker secret-memory and zeroization control than the C++ implementation; those limitations must be documented for users handling production keys.
+
+Cross-implementation tests must cover C++-written repositories restored by Python and specification-generated golden vectors consumed by both readers.
+
+### 14.5 Error model
 
 Expected failures use typed results such as `std::expected` with a stable error taxonomy:
 
@@ -762,7 +942,7 @@ Retry policy is driven by error category and bounded attempts. Integrity failure
 
 Every I/O error preserves the operation, path where safe, native error code, and retry classification. Error messages should tell the user what failed and the next useful action without exposing secrets.
 
-### 14.4 Native I/O and resource ownership
+### 14.6 Native I/O and resource ownership
 
 `std::filesystem::path` is used for path composition and native path representation. Critical data paths use native handles and platform APIs where standard streams cannot provide required durability, no-follow, or error semantics.
 
@@ -780,7 +960,7 @@ Implementation rules include:
 
 Destructors perform only safe, non-throwing cleanup. Commit and rollback state transitions are explicit.
 
-### 14.5 Code style and reviewability
+### 14.7 Code style and reviewability
 
 Names should describe domain concepts such as `SnapshotPublisher`, `ChunkValidator`, and `BackupSession` rather than generic helpers. Functions should have one clear responsibility, and security-critical state transitions should be visible in one place.
 
@@ -794,51 +974,64 @@ Tests provide evidence for behavior under the fault model; they do not prove tha
 
 ### 15.1 Format and cryptographic tests
 
-- Published library test vectors and known-answer tests for every selected primitive and encoding.
-- Golden repository objects for each format version.
-- Wrong-password, wrong-repository, wrong-object-type, and wrong-context authentication failures.
-- Bit flips, truncation, trailing bytes, oversized lengths, and invalid nonces or wrapped keys.
-- Chunk swapping, reordering, duplication, and cross-repository transplantation.
-- Confirmation that no plaintext is released from an object before authentication succeeds.
+- Published library test vectors and known-answer tests for every selected primitive and encoding, including secretstream.
+- Golden repository objects and framed snapshots for each format version.
+- Wrong-password, wrong-repository, wrong-storage-epoch, wrong-object-type, and wrong-context authentication failures.
+- Bit flips, truncation, trailing bytes, oversized frame lengths, and invalid nonces, stream headers, or wrapped keys.
+- Chunk swapping, snapshot-frame reordering or duplication, and cross-repository transplantation.
+- Confirmation that bounded single-message objects release no plaintext before their authentication tag succeeds.
+- Confirmation that a snapshot frame reaches the record parser only after its own authentication succeeds and that parsed records remain provisional until `FINAL`, the frame count, logical length, whole-manifest commitment, and semantic checks all succeed.
+- Missing `FINAL`, extra frames after `FINAL`, and final-commitment mismatches must produce integrity errors without snapshot selection, restoration, or other external side effects.
+- Synthetic snapshots with very large entry counts must demonstrate bounded memory rather than whole-snapshot ciphertext or JSON DOM allocation.
+- Timestamp golden vectors cover the NTFS epoch and range, pre-Unix-epoch normalization, nanosecond boundaries, exact 100-nanosecond conversion, and target-precision rounding.
 - Compatibility tests proving that newer builds can read every supported historical format.
 
 ### 15.2 Deduplication and comparison tests
 
 - Identical files at multiple paths share objects while retaining independent metadata.
 - Changed prefixes, inserted bytes, empty files, and chunk-boundary sizes produce correct references.
-- A pre-existing damaged object with the expected filename fails deduplication validation and cannot enter a new valid snapshot.
-- An attacker-created placeholder with the expected filename cannot cause backup success.
+- A pre-existing damaged object without acceptable prior evidence fails deduplication validation and cannot enter a new valid snapshot.
+- An attacker-created placeholder without acceptable prior evidence cannot cause backup success.
+- Instrumentation proves that each distinct object receives at most one full validation per session, including under `--revalidate-all`.
+- Standard backups report exactly when prior snapshot or cache evidence is used; `--revalidate-all` bypasses that evidence and detects a currently damaged referenced object.
+- Forged, malformed, or wrong-epoch cache entries are never used; deleting the cache causes revalidation without changing repository correctness. Valid replayed entries are treated only as historical evidence, never as current-health proof.
+- `--full-source-read` and `--revalidate-all` operate independently and produce accurate verification-scope reports.
 - Metadata-only source matches are reported as `metadata-match`, never as content or repository verification.
 - Content matching without repository checks is reported as `content-match`, never as `verified`.
 - Missing referenced chunks cause `repository-damaged` and exit code 4.
 
-### 15.3 Fault-injection tests
+### 15.3 Simulated persistence and fault injection
 
-Inject failures at every protocol boundary:
+The M0 simulated filesystem is the primary protocol test environment. It exposes volatile and durable state independently and injects failures at every protocol boundary:
 
-- source open, read, and metadata queries;
+- source open, read, metadata queries, mutation, and disconnect;
 - destination create, short write, flush, close, read-back, publish, and directory sync;
-- disk full, permission loss, disconnect, stale handle, and lock failure;
-- process termination before and after every publication step;
-- torn journal records, lost journals, duplicate records, and stale sessions.
+- persistence reordering and crashes between every adjacent pair of modelled operations;
+- disk full, permission loss, stale handle, lock failure, and ignored flush;
+- torn journal records, lost journals, duplicate records, and stale sessions;
+- lost, malformed, stale, or wrong-epoch validation caches.
+
+Small sequences are exhaustively enumerated; larger randomized schedules record their seeds and are reproducible. R1–R7 are checked mechanically after every modeled crash and recovery step. Counterexamples become permanent regression cases.
 
 The core scenario is:
 
 ```text
 begin backup
-  -> fail or terminate at a seeded step
+  -> fail, reorder persistence, or terminate at a seeded step
   -> reopen and verify the repository
   -> resume or restart
   -> compare restored bytes with the original stable source
 ```
 
-Randomized schedules must record their seeds and be reproducible. Real subprocess termination tests complement in-process fault injection because destructor-only cleanup does not simulate `kill -9` or power loss.
+Real subprocess termination tests complement simulation because destructor-only cleanup does not simulate `kill -9` or power loss. Native filesystem conformance tests separately check that the model's atomicity and persistence assumptions match each declared platform. Passing the simulator is not evidence that arbitrary real hardware honors those assumptions.
 
 ### 15.4 Filesystem and restoration tests
 
 Use randomized directory trees containing empty files, large files, Unicode names, deep paths, and supported metadata. Test destination traversal, absolute paths, reserved names, case collisions, symbolic-link replacement races, overwrite refusal, and metadata failures.
 
-Cross-platform tests must compare against the documented support matrix rather than assume every source attribute has a target equivalent.
+Multi-root tests include identical root basenames and identical relative paths in different roots. Root-qualified selection, stable root identity, default label mapping, ambiguous bare-path rejection, and collision-free `--strip-root` behavior must all be covered.
+
+Cross-platform tests must compare against the documented support matrix rather than assume every source attribute has a target equivalent. Native durability conformance tests record exact API sequences, filesystem versions, assumptions, and observed results in the platform durability contract; untested platforms are not promoted to equivalent assurance.
 
 Tests for files larger than 4 GiB and offsets beyond 32-bit boundaries are mandatory. Sparse-file efficiency may be deferred, but correctness may not.
 
@@ -852,11 +1045,24 @@ Run the built executable as a subprocess and assert:
 - JSON validity and schema compatibility;
 - no interactive prompt in non-TTY, JSON, or CI modes;
 - no ANSI sequences in redirected output;
-- dry-run operations cause no filesystem mutation;
-- destructive operations require explicit approval;
+- dry-run operations cause no filesystem mutation, including validation-cache updates;
+- destructive operations and partial-snapshot restores require explicit approval;
+- `latest` resolves to a partial snapshot without fallback, restore refuses it without `--allow-partial`, and `latest-complete` selects complete history explicitly;
+- ambiguous multi-root paths are rejected and root-qualified restores map to the documented destination;
+- default verification performs no writes, while `--refresh-validation-cache` changes only the disposable cache;
+- `repo passwd` replaces only the authenticated slot, leaves other slots working, rejects the old password with the updated configuration, and survives crash tests with either a complete old or complete new configuration;
 - cancellation returns 130 and leaves a resumable or safely restartable state.
 
-### 15.6 CI and analysis
+### 15.6 Cross-implementation recovery
+
+- Restore C++-written version 1 repositories with the Python reference recoverer and compare content and supported metadata.
+- Consume specification-generated golden configuration, chunk, and framed-snapshot vectors with both implementations.
+- Verify wrong-context, missing-`FINAL`, corruption, and traversal cases across both readers.
+- Exercise large framed snapshots with bounded memory in the reference recoverer.
+- Hash repository contents before and after reference recovery to confirm that the read-only tool performs no repository mutation.
+- Treat a disagreement as a specification or implementation defect to resolve explicitly, never as permission for one reader to imitate undocumented behavior of the other.
+
+### 15.7 CI and analysis
 
 CI covers Windows, Linux, and macOS with supported Debug and Release builds. Sanitizer jobs run on platforms and compilers where they are supported:
 
@@ -874,8 +1080,9 @@ CI configurations must not imply that all sanitizers run simultaneously or on ev
 
 The following require explicit versioning and migration planning:
 
-- repository configuration and object formats;
-- snapshot and journal schemas;
+- repository configuration, object, framed-snapshot, and validation-cache formats;
+- snapshot and journal record schemas;
+- platform durability assumptions and supported filesystem contracts;
 - command and option names;
 - exit codes;
 - JSON output schemas;
@@ -897,51 +1104,59 @@ Security reviewers need a precise threat model, format specification, and set of
 
 ## 17. Delivery milestones
 
-### M0: reviewed foundations
+### M0: reviewed foundations and simulated persistence
 
-- Finalize the threat model, command-success semantics, and version 1 repository-format specification.
-- Establish CMake, locked dependencies, platform abstractions, typed errors, and the test harness.
-- Implement bounded config parsing, password unlocking, secure key storage, and encrypted envelopes with known-answer tests.
+- Finalize the threat model, command-success semantics, verification-evidence policy, and version 1 repository-format specification.
+- Specify framed snapshots, canonical context derivation, final commitments, timestamp encoding, root identity, and bounded record batches byte for byte.
+- Write the initial platform durability contract with explicit assumptions and a native conformance-test plan.
+- Establish CMake, locked dependencies, narrow platform/storage interfaces, typed errors, and the test harness.
+- Build the deterministic simulated filesystem with volatile and durable views, reorderable persistence, crash points, and reproducible failure schedules before accepting the production commit protocol.
+- Implement bounded config parsing, password unlocking, secure key storage, bounded encrypted objects, and framed streams with known-answer tests.
 
-### M1: narrow end-to-end backup
+### M1: narrow end-to-end backup and independent recovery
 
 - Regular files and directories on local filesystems.
-- Fixed-size chunks, deduplication with mandatory existing-object validation, and encrypted complete snapshots.
+- Fixed-size chunks, evidence-backed deduplication, full validation of objects lacking acceptable evidence, and a mandatory per-session validation cache.
+- `--revalidate-all` for current-session validation of every distinct referenced chunk.
+- Framed, encrypted complete snapshots with bounded streaming parsers and no whole-snapshot DOM.
 - `repo init`, `backup add`, `snapshot list`, `snapshot show`, `snapshot restore`, and `repo verify`.
-- Atomic publication, cancellation, and deterministic crash-injection tests.
-- Baseline path, size, mtime, and selected permission metadata.
+- Atomic publication, cancellation, exhaustive small-model crash checks, seeded simulation, and native filesystem conformance tests.
+- Baseline path, size, normalized timestamp, and selected permission metadata.
+- The read-only Python reference recoverer, cross-implementation restoration tests, and specification-generated golden vectors.
 
 This milestone deliberately favors a complete, testable vertical slice over a broad command surface.
 
 ### M2: interruption recovery and meaningful checks
 
 - Encrypted journals, `backup status`, and `backup resume`.
-- Partial snapshots through explicit `--allow-partial`.
+- Partial snapshots through explicit `--allow-partial`, including partial-aware `latest`, `latest-complete`, and restore approval behavior.
 - `backup check` metadata, content, and repository-verification modes.
-- Deep reachable-chunk verification and large-file integration tests.
+- Deep reachable-chunk verification, explicit validation-cache refresh, and large-file integration tests.
 
 ### M3: repository lifecycle and practical performance
 
-- Password change and recovery-key slots.
+- Password-slot replacement semantics, additional key-slot management, and recovery keys.
+- Authenticated cross-session validation caches and explicit storage-epoch rotation.
 - Exclusion rules, optional zstd compression, statistics, and snapshot differences.
 - Snapshot deletion, two-phase garbage collection, and retention rules.
-- Incremental source scans with explicit trade-offs and a full-read alternative.
+- Incremental source scans with explicit trade-offs and `--full-source-read` as the full-read alternative.
 - Expanded metadata and symbolic-link support.
 
-Incremental scans that reuse old chunk lists from size and mtime alone must be labeled as an optimization, not equivalent to rereading source content.
+Incremental scans that reuse old chunk lists from size and mtime alone must be labeled as an optimization, not equivalent to rereading source content. Reports must distinguish current-session validation from prior evidence and avoid claiming O(changed data) for full snapshot metadata output.
 
 ### M4: advanced capabilities
 
 Each item requires a separate design review:
 
 - content-defined chunking;
+- reusable manifest segments or authenticated indexes that reduce full-snapshot metadata rewriting;
 - external rollback anchors and signed repository checkpoints;
 - operating-system snapshots such as VSS;
 - hard-link topology, ACLs, extended attributes, alternate streams, and resource forks;
 - object quarantine and salvage tools;
 - size padding;
 - remote storage backends with backend-specific consistency protocols;
-- binary snapshot payloads for very large repositories.
+- alternative binary snapshot record payloads for size or parsing performance.
 
 ## 18. Initial decisions and remaining questions
 
@@ -949,13 +1164,22 @@ Each item requires a separate design review:
 
 - Snapshots and chunks are immutable after publication.
 - Snapshot publication, not chunk creation, defines backup success.
-- Existing deduplication targets require full validation before reuse.
+- R2 accepts current-session validation or policy-approved authenticated prior evidence; objects lacking evidence require full validation.
+- A per-session validation cache is mandatory, while cross-session caches are authenticated, epoch-scoped, disposable, and historical rather than freshness proofs.
+- `--full-source-read` and `--revalidate-all` provide separate full-read controls; no ambiguous `--paranoid` guarantee is defined.
+- Snapshot metadata output remains O(total entry count) until reusable manifest segments or indexes are introduced.
+- Snapshots use bounded, context-bound secretstream frames and independently parsed record batches; records remain provisional until authenticated `FINAL` and whole-manifest checks.
 - Metadata matching, source-content matching, and repository verification are separate assurance levels.
-- Partial snapshots require an explicit option and remain visibly partial.
+- Partial snapshots require an explicit option and remain visibly partial. `latest` includes them, restore requires `--allow-partial`, and `latest-complete` is explicit.
+- Multi-root restores use root-qualified paths and documented root-label destination mapping.
+- `repo passwd` replaces the authenticated password slot by default but does not revoke an old MK or old configuration copy.
+- Persisted timestamps use signed seconds since the Unix epoch plus normalized unsigned nanoseconds, not one bounded total-nanosecond integer.
+- The platform durability contract is separate from the repository format and distinguishes assumptions from native test results.
+- Simulated persistence and deterministic fault injection begin in M0; the narrow read-only Python reference recoverer arrives in M1.
 - There is no mutable latest-snapshot pointer and no separate key-check object.
-- XChaCha20-Poly1305 and Argon2id are the initial cryptographic suite.
+- XChaCha20-Poly1305, secretstream, and Argon2id are the initial cryptographic suite.
 - Journals and caches are disposable optimization state.
-- Verification never performs implicit repairs.
+- Verification never performs implicit repairs; validation-cache refresh is explicit.
 - Restore verifies complete file content before final publication.
 - Initial implementation targets regular files and directories before platform-specific edge cases.
 - C++23 and a small, locked dependency set are the initial engineering baseline.
@@ -963,13 +1187,15 @@ Each item requires a separate design review:
 ### 18.2 Questions to resolve before freezing format version 1
 
 - Benchmark 4 MiB, 8 MiB, and 16 MiB chunks for representative source and repository devices.
-- Specify canonical AAD encodings, integer byte order, object-length limits, and snapshot size limits byte for byte.
+- Specify canonical context and AAD encodings, integer byte order, the snapshot stream-key KDF, whole-manifest commitment, frame sizes, and record-batch limits byte for byte.
 - Select Argon2id calibration targets and upper resource limits for supported platforms.
-- Define exact Unicode and non-UTF-8 filename behavior for each supported host and restore target.
+- Define exact Unicode and non-UTF-8 filename behavior, root-label collision handling, and restore-target mapping for each supported host.
 - Define snapshot lineage behavior when retention removes intermediate or parent snapshots.
 - Specify journal checkpointing and the safest behavior when resumed source identity is inconclusive.
+- Specify the validation-cache encoding, authentication and expiration policy, storage-epoch rotation workflow, and cache behavior during recovery.
 - Determine how long validated objects and partial sessions are retained before garbage collection.
-- Establish the minimum supported compiler, CMake, and operating-system versions from the CI matrix.
+- Populate the platform durability contract with native conformance results and declare supported filesystem and storage-class combinations.
+- Establish the minimum supported compiler, CMake, Python, and operating-system versions from the CI matrix.
 
 These questions must be resolved through explicit specifications and tests, not left as accidental consequences of implementation details.
 

@@ -125,6 +125,9 @@ domain::Result<SnapshotHeaderInfo> parse_snapshot_header(
             const auto& selection = document.at("selection");
             header.selection_policy.unsupported = require_string(selection, "unsupported");
             header.selection_policy.one_file_system = selection.at("one_file_system").get<bool>();
+            if (selection.contains("exclusions")) {
+                header.selection_policy.exclusions = selection.at("exclusions").get<std::vector<std::string>>();
+            }
             if (header.selection_policy.unsupported != "skip"
                 && header.selection_policy.unsupported != "fail") {
                 throw std::invalid_argument("invalid unsupported-entry policy");

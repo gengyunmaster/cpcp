@@ -81,6 +81,7 @@ json selection_policy_json(const SelectionPolicy& policy) {
     return {
         {"unsupported", policy.unsupported},
         {"one_file_system", policy.one_file_system},
+        {"exclusions", policy.exclusions},
     };
 }
 
@@ -88,6 +89,9 @@ SelectionPolicy parse_selection_policy(const json& object) {
     SelectionPolicy policy;
     policy.unsupported = require_string(object, "unsupported");
     policy.one_file_system = object.at("one_file_system").get<bool>();
+    if (object.contains("exclusions")) {
+        policy.exclusions = object.at("exclusions").get<std::vector<std::string>>();
+    }
     if ((policy.unsupported != "skip" && policy.unsupported != "fail")) {
         throw std::invalid_argument("invalid unsupported-entry policy");
     }
@@ -704,7 +708,8 @@ domain::Result<SnapshotSummary> SnapshotWriter::finish(
                 const auto header = parse_snapshot_header(**record);
                 if (!header || header_seen
                     || header->selection_policy.unsupported != summary_.selection_policy.unsupported
-                    || header->selection_policy.one_file_system != summary_.selection_policy.one_file_system) {
+                    || header->selection_policy.one_file_system != summary_.selection_policy.one_file_system
+                    || header->selection_policy.exclusions != summary_.selection_policy.exclusions) {
                     return std::unexpected(Error{ErrorCode::integrity, "snapshot header semantics mismatch"});
                 }
                 header_seen = true;

@@ -102,6 +102,8 @@ int run(int argc, char** argv) {
     add->add_option("--unsupported", unsupported_policy, "Policy for unsupported entries: skip or fail")
         ->default_val(unsupported_policy)
         ->check(CLI::IsMember({"skip", "fail"}));
+    add->add_option("--exclude", backup_options.exclude_patterns, "Exclude a root-relative glob with * and ?")
+        ->expected(-1);
     add_password_options(add);
     add->callback([&] {
         backup_options.unsupported_fail = unsupported_policy == "fail";

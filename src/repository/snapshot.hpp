@@ -67,6 +67,7 @@ struct FailureInfo {
 struct SelectionPolicy {
     std::string unsupported = "skip";
     bool one_file_system = true;
+    std::vector<std::string> exclusions;
 };
 
 struct SelectionStats {

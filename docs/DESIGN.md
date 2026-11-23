@@ -231,6 +231,8 @@ Initial defaults are:
 
 `--unsupported=skip` is the default and produces a complete-under-policy snapshot when all required entries succeed. Every skip is recorded with a reason and reported in the command summary. `--unsupported=fail` makes such entries required; failure then follows the normal no-publication or `--allow-partial` rules.
 
+`--exclude <glob>` adds an authenticated root-relative exclusion. Patterns are limited to 512 bytes and support `*` and `?`; `*` may cross directory separators. A matching directory is not traversed. Explicit exclusions remain policy skips even under `--unsupported=fail`, and resume does not duplicate their records. `backup check` reports them as `skipped` rather than verified entries.
+
 A selected regular file that cannot be read because of permissions, locking, I/O errors, or detected mutation is a failed required entry, not an unsupported skip. Explicit user exclusion rules are also policy skips and must be distinguished from unsupported types.
 
 `backup check` reports policy-skipped source entries explicitly and never counts them as verified. Restore and snapshot-inspection commands display the selection policy so that a complete-under-policy snapshot cannot be mistaken for a capture of every object in the original tree.

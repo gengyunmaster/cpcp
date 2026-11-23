@@ -155,6 +155,9 @@ domain::Result<SessionSpec> parse_session(const json& payload) {
         }
         spec.selection.unsupported = payload.at("unsupported").get<std::string>();
         spec.selection.one_file_system = payload.at("one_file_system").get<bool>();
+        if (payload.contains("exclusions")) {
+            spec.selection.exclusions = payload.at("exclusions").get<std::vector<std::string>>();
+        }
         spec.allow_partial = payload.at("allow_partial").get<bool>();
         spec.has_parent = payload.at("has_parent").get<bool>();
         if (spec.has_parent) {
@@ -183,6 +186,7 @@ json session_json(const SessionSpec& spec, bool has_parent) {
         {"roots", roots},
         {"unsupported", spec.selection.unsupported},
         {"one_file_system", spec.selection.one_file_system},
+        {"exclusions", spec.selection.exclusions},
         {"allow_partial", spec.allow_partial},
         {"has_parent", has_parent},
         {"parent", has_parent ? json(hex(spec.parent_uuid)) : json(nullptr)},
@@ -295,6 +299,44 @@ std::string display_path(const std::string& path) {
         return path;
     }
     return "hex:" + domain::hex_encode(std::as_bytes(std::span(path)));
+}
+
+bool glob_match(std::string_view pattern, std::string_view text) {
+    std::size_t pattern_index = 0;
+    std::size_t text_index = 0;
+    std::size_t star = std::string_view::npos;
+    std::size_t star_text = 0;
+    while (text_index < text.size()) {
+        if (pattern_index < pattern.size()
+            && (pattern[pattern_index] == '?' || pattern[pattern_index] == text[text_index])) {
+            ++pattern_index;
+            ++text_index;
+        } else if (pattern_index < pattern.size() && pattern[pattern_index] == '*') {
+            star = pattern_index++;
+            star_text = text_index;
+        } else if (star != std::string_view::npos) {
+            pattern_index = star + 1;
+            text_index = ++star_text;
+        } else {
+            return false;
+        }
+    }
+    while (pattern_index < pattern.size() && pattern[pattern_index] == '*') {
+        ++pattern_index;
+    }
+    return pattern_index == pattern.size();
+}
+
+std::optional<std::string> exclusion_reason(
+    const repository::SelectionPolicy& selection,
+    const std::string& path
+) {
+    for (const auto& pattern : selection.exclusions) {
+        if (glob_match(pattern, path)) {
+            return "excluded: " + pattern;
+        }
+    }
+    return std::nullopt;
 }
 
 bool path_prefix(const std::filesystem::path& prefix, const std::filesystem::path& path) {
@@ -1309,6 +1351,36 @@ domain::Result<BackupReport> execute(Runtime runtime, bool resumed) {
                 }
                 continue;
             }
+            if (const auto excluded = exclusion_reason(runtime.spec.selection, relative)) {
+                const auto previous = runtime.processed.find(root.uuid, relative);
+                if (!previous) {
+                    return std::unexpected(previous.error());
+                }
+                if (!*previous) {
+                    const auto skipped = runtime.writer.append_policy_skip(PolicySkip{root.index, relative, *excluded});
+                    if (!skipped) {
+                        return std::unexpected(skipped.error());
+                    }
+                    ++runtime.skipped;
+                    const auto journaled = runtime.journal.append(JournalRecordType::policy_skip, {
+                        {"schema", "cpcp.policy-skip.v1"},
+                        {"root", root.index},
+                        {"path", relative},
+                        {"reason", *excluded},
+                    }, true);
+                    if (!journaled) {
+                        return std::unexpected(journaled.error());
+                    }
+                }
+                if (std::filesystem::is_directory(status)) {
+                    iterator.disable_recursion_pending();
+                }
+                const auto advanced = advance();
+                if (!advanced) {
+                    return std::unexpected(advanced.error());
+                }
+                continue;
+            }
             if (std::filesystem::is_directory(status)) {
                 if (path_prefix(canonical_repository, entry.path())) {
                     iterator.disable_recursion_pending();
@@ -1655,6 +1727,17 @@ domain::Result<BackupReport> backup_add(
     if (roots.empty()) {
         return std::unexpected(Error{ErrorCode::usage, "at least one source root is required"});
     }
+    for (const auto& pattern : options.exclude_patterns) {
+        if (pattern.empty() || pattern.size() > 512 || pattern.starts_with('/')
+            || pattern.starts_with('\\')) {
+            return std::unexpected(Error{ErrorCode::usage, "exclusion patterns must be nonempty root-relative globs"});
+        }
+        for (const auto& component : std::filesystem::path(pattern)) {
+            if (component == "..") {
+                return std::unexpected(Error{ErrorCode::usage, "exclusion patterns cannot contain .."});
+            }
+        }
+    }
     if (options.no_parent && options.base_generation) {
         return std::unexpected(Error{ErrorCode::usage, "--base and --no-parent are mutually exclusive"});
     }
@@ -1689,7 +1772,11 @@ domain::Result<BackupReport> backup_add(
     spec.context.lineage_uuid = parent ? parent->context.lineage_uuid : crypto::random_uuid();
     spec.context.session_uuid = crypto::random_uuid();
     spec.context.generation = summaries->empty() ? 1 : summaries->back().context.generation + 1;
-    spec.selection = repository::SelectionPolicy{options.unsupported_fail ? "fail" : "skip", !options.cross_file_systems};
+    spec.selection = repository::SelectionPolicy{
+        options.unsupported_fail ? "fail" : "skip",
+        !options.cross_file_systems,
+        options.exclude_patterns,
+    };
     spec.allow_partial = options.allow_partial;
     spec.has_parent = parent.has_value();
     if (parent) {

@@ -65,6 +65,44 @@ bool selected_path(const std::string& path, const std::string& selection) {
             && path[selection.size()] == '/');
 }
 
+bool glob_match(std::string_view pattern, std::string_view text) {
+    std::size_t pattern_index = 0;
+    std::size_t text_index = 0;
+    std::size_t star = std::string_view::npos;
+    std::size_t star_text = 0;
+    while (text_index < text.size()) {
+        if (pattern_index < pattern.size()
+            && (pattern[pattern_index] == '?' || pattern[pattern_index] == text[text_index])) {
+            ++pattern_index;
+            ++text_index;
+        } else if (pattern_index < pattern.size() && pattern[pattern_index] == '*') {
+            star = pattern_index++;
+            star_text = text_index;
+        } else if (star != std::string_view::npos) {
+            pattern_index = star + 1;
+            text_index = ++star_text;
+        } else {
+            return false;
+        }
+    }
+    while (pattern_index < pattern.size() && pattern[pattern_index] == '*') {
+        ++pattern_index;
+    }
+    return pattern_index == pattern.size();
+}
+
+std::optional<std::string> exclusion_reason(
+    const repository::SelectionPolicy& selection,
+    const std::string& path
+) {
+    for (const auto& pattern : selection.exclusions) {
+        if (glob_match(pattern, path)) {
+            return "excluded: " + pattern;
+        }
+    }
+    return std::nullopt;
+}
+
 std::string relative_path(
     const std::filesystem::path& root,
     const std::filesystem::path& path
@@ -445,6 +483,22 @@ domain::Result<CheckReport> check_backup(
             continue;
         }
         const bool in_scope = selected_path(relative, options.path);
+        if (const auto excluded = exclusion_reason(selected->selection_policy, relative)) {
+            if (in_scope) {
+                const auto emitted = emit(CheckEvent{root.index, relative, "skipped", *excluded, 0});
+                if (!emitted) {
+                    return std::unexpected(emitted.error());
+                }
+            }
+            if (std::filesystem::is_directory(status)) {
+                iterator.disable_recursion_pending();
+            }
+            const auto advanced = advance();
+            if (!advanced) {
+                return std::unexpected(advanced.error());
+            }
+            continue;
+        }
 
         if (std::filesystem::is_directory(status)) {
             if (path_prefix(canonical_repository, entry.path())) {

@@ -228,7 +228,8 @@ domain::Result<std::uint64_t> verify_snapshot(
             auto header = repository::parse_snapshot_header(**record);
             if (!header
                 || header->selection_policy.unsupported != summary.selection_policy.unsupported
-                || header->selection_policy.one_file_system != summary.selection_policy.one_file_system) {
+                || header->selection_policy.one_file_system != summary.selection_policy.one_file_system
+                || header->selection_policy.exclusions != summary.selection_policy.exclusions) {
                 return std::unexpected(Error{ErrorCode::integrity, "snapshot selection policy mismatch"});
             }
             break;

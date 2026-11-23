@@ -51,6 +51,7 @@ nlohmann::json summary_json(const repository::SnapshotSummary& summary) {
         {"selection_policy", {
             {"unsupported", summary.selection_policy.unsupported},
             {"one_file_system", summary.selection_policy.one_file_system},
+            {"exclusions", summary.selection_policy.exclusions},
         }},
         {"roots", roots},
         {"stats", stats_json(summary.stats)},

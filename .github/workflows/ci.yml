@@ -81,3 +81,39 @@ jobs:
         run: |
           python3 -m pip install -r tools/requirements.txt
           python3 tools/verify_crypto_vectors.py
+
+  sanitizers:
+    strategy:
+      fail-fast: false
+      matrix:
+        preset:
+          - asan
+          - tsan
+    runs-on: ubuntu-latest
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build prerequisites
+        run: sudo apt-get update && sudo apt-get install -y autoconf autoconf-archive automake libtool pkg-config clang libc++-dev libc++abi-dev
+
+      - name: Bootstrap vcpkg
+        shell: bash
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
+          git -C "$VCPKG_ROOT" checkout 277978ad2eddc3b05ecf288dcd33071968cd2f79
+          "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }} -DVCPKG_TARGET_TRIPLET=x64-linux -DCPCP_ENABLE_REFERENCE_TESTS=ON
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      - name: Test
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+          TSAN_OPTIONS: halt_on_error=1
+        run: ctest --preset ${{ matrix.preset }}

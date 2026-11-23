@@ -50,6 +50,17 @@ ctest --preset release
 
 The manifest and builtin baseline in `vcpkg.json` lock all project dependencies.
 
+CI runs Debug and Release builds on Ubuntu, Windows, and macOS, MinGW-static Windows builds, independent recovery tests, and dedicated Address/Undefined Behavior Sanitizer and Thread Sanitizer jobs. Sanitizer presets are also available locally:
+
+```bash
+cmake --preset asan -DVCPKG_TARGET_TRIPLET=x64-linux
+cmake --build --preset asan
+ctest --preset asan
+cmake --preset tsan -DVCPKG_TARGET_TRIPLET=x64-linux
+cmake --build --preset tsan
+ctest --preset tsan
+```
+
 ## Basic workflow
 
 Create a password file readable only by its owner, then initialize a repository:

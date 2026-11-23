@@ -266,9 +266,10 @@ domain::Result<void> apply_metadata(
         }
     }
 
-    const std::chrono::system_clock::time_point timestamp{
-        std::chrono::seconds{seconds} + std::chrono::nanoseconds{nanoseconds}
-    };
+    const std::chrono::system_clock::duration elapsed = std::chrono::duration_cast<
+        std::chrono::system_clock::duration
+    >(std::chrono::seconds{seconds} + std::chrono::nanoseconds{nanoseconds});
+    const std::chrono::system_clock::time_point timestamp{elapsed};
     const auto file_time = std::filesystem::file_time_type::clock::from_sys(timestamp);
     std::filesystem::last_write_time(path, file_time, error);
     if (error) {

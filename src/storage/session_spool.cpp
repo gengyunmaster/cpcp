@@ -71,9 +71,9 @@ domain::Result<void> SessionSpoolWriter::create(
 
     const Bytes header{
         std::byte{'C'},
-        domain == crypto::StreamDomain::snapshot ? std::byte{'N'} : std::byte{'P'},
-        std::byte{'S'},
         std::byte{'P'},
+        std::byte{'S'},
+        domain == crypto::StreamDomain::snapshot ? std::byte{'N'} : std::byte{'P'},
         std::byte{1},
         std::byte{0},
     };
@@ -183,9 +183,9 @@ domain::Result<void> SessionSpoolReader::open(
     }
     const Bytes expected{
         std::byte{'C'},
-        domain == crypto::StreamDomain::snapshot ? std::byte{'N'} : std::byte{'P'},
-        std::byte{'S'},
         std::byte{'P'},
+        std::byte{'S'},
+        domain == crypto::StreamDomain::snapshot ? std::byte{'N'} : std::byte{'P'},
         std::byte{1},
         std::byte{0},
     };

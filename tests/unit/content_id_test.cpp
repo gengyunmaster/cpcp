@@ -1,5 +1,7 @@
 #include "crypto/content_id.hpp"
 
+#include "domain/encoding.hpp"
+
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
@@ -82,6 +84,9 @@ TEST_CASE("subkeys are deterministic and domain separated") {
 
     REQUIRE(std::ranges::equal(first.bytes(), second.bytes()));
     REQUIRE_FALSE(std::ranges::equal(first.bytes(), other.bytes()));
+    REQUIRE(
+        cpcp::domain::hex_encode(first.bytes()) == "68b7471eeec2a59d44d871efd9e30befb1236067a008d1d0c525bbabed504dd2"
+    );
 }
 
 TEST_CASE("generated keys are distinct and movable") {

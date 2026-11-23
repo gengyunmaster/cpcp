@@ -53,6 +53,11 @@ jobs:
           & "$env:VCPKG_ROOT/bootstrap-vcpkg.bat" -disableMetrics
 
       - name: Configure
+        if: matrix.preset == 'dev' && matrix.os == 'ubuntu-latest'
+        run: cmake --preset dev -DCPCP_ENABLE_REFERENCE_TESTS=ON
+
+      - name: Configure
+        if: matrix.preset != 'dev' || matrix.os != 'ubuntu-latest'
         run: cmake --preset ${{ matrix.preset }}
 
       - name: Build

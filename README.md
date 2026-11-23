@@ -56,6 +56,7 @@ With Python and the locked dependency from `tools/requirements.txt` installed:
 
 ```bash
 python3 tools/verify_crypto_vectors.py
+python3 tools/test_reference_recoverer.py --cpcp build/dev/cpcp
 ```
 
 ## License

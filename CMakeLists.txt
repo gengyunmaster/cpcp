@@ -240,4 +240,16 @@ if(BUILD_TESTING)
                 --write-test --iterations 2 --size 65536 --json
         )
     endif()
+
+    option(CPCP_ENABLE_REFERENCE_TESTS "Enable independent Python recoverer tests" OFF)
+    set(CPCP_PYTHONPATH "" CACHE STRING "Optional PyNaCl module path for reference tests")
+    if(CPCP_ENABLE_REFERENCE_TESTS)
+        find_package(Python3 REQUIRED COMPONENTS Interpreter)
+        add_test(
+            NAME reference_recoverer
+            COMMAND ${CMAKE_COMMAND} -E env PYTHONPATH=${CPCP_PYTHONPATH}
+                ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_reference_recoverer.py
+                --cpcp $<TARGET_FILE:cpcp>
+        )
+    endif()
 endif()

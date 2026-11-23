@@ -28,6 +28,14 @@ A repository master key contains 32 random bytes. Subkeys use libsodium `crypto_
 
 The C++ `SecureKey` prototype allocates with `sodium_malloc`, requests page locking, prohibits copying, and releases with `sodium_free`.
 
+For independent implementations, `crypto_kdf_derive_from_key` is BLAKE2b with an empty message, the 32-byte master key as keyed input, a 16-byte salt consisting of `uint64_le(subkey_id) || eight_zero_bytes`, and a 16-byte personalization consisting of the eight-byte context followed by eight zero bytes. This is compatible with Python `hashlib.blake2b(key=master, salt=salt, person=personal, digest_size=32)`.
+
+For key bytes `00 01 02 ... 1f`, subkey ID 1, and context `idkey001`, the derived key is:
+
+```text
+68b7471eeec2a59d44d871efd9e30befb1236067a008d1d0c525bbabed504dd2
+```
+
 ## 3. Content identities
 
 Chunk identity is:
@@ -126,9 +134,50 @@ Record types are:
 | 6 | File end |
 | 7 | Policy skip |
 | 8 | Failure |
+| 9 | Directory |
 | 255 | Final summary |
 
 The final summary uses `TAG_FINAL`; all other records use `TAG_MESSAGE`. Missing FINAL, data after FINAL, unexpected record tags, frame reordering, wrong context, and oversized frames are errors.
+
+### Snapshot main outer context
+
+`CPSN` snapshots include the complete decryption context before the secretstream header:
+
+```text
+"CPSN"[4]
+version_u16_le = 1
+repository_uuid[16]
+storage_epoch[16]
+snapshot_uuid[16]
+lineage_uuid[16]
+generation_u64_le
+session_uuid[16]
+secretstream_header[24]
+frames[]
+```
+
+This self-describing envelope permits `repo repair-summary` to reconstruct lineage and session metadata without relying on the damaged summary.
+
+### Authenticated summary envelope
+
+`CPSM` summaries include the same authenticated context, a random nonce, and a bounded encrypted JSON payload:
+
+```text
+"CPSM"[4]
+version_u16_le = 1
+reserved_u16_le = 0
+repository_uuid[16]
+storage_epoch[16]
+snapshot_uuid[16]
+lineage_uuid[16]
+generation_u64_le
+session_uuid[16]
+nonce[24]
+ciphertext_length_u32_le
+ciphertext[ciphertext_length]
+```
+
+Summary AAD is `"cpcp.summary.v1" || repository_uuid || storage_epoch || snapshot_uuid || lineage_uuid || generation_u64_le`. The inner payload repeats all context fields, including the session UUID, and both representations must match. The summary stores the main ciphertext's SHA-256 digest and exact stored length.
 
 ## 6. Encrypted session spool disk format
 

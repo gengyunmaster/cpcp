@@ -77,6 +77,9 @@ SnapshotStats parse_stats(const json& object) {
     stats.chunk_references = require_uint_string(object, "chunk_references");
     stats.new_chunks = require_uint_string(object, "new_chunks");
     stats.deduplicated_chunks = require_uint_string(object, "deduplicated_chunks");
+    if (object.contains("source_reused_files")) {
+        stats.source_reused_files = require_uint_string(object, "source_reused_files");
+    }
     stats.chunk_set_commitment = require_hex<32>(object, "chunk_set_commitment");
     if (object.contains("selection")) {
         const auto& selection = object.at("selection");

@@ -211,6 +211,8 @@ Under the standard policy and after incremental source scanning is implemented, 
 
 Every distinct reference in the new snapshot receives a current metadata existence, type, and stored-length check, so repository metadata operations remain O(total distinct referenced chunks). Accepting base-snapshot evidence also requires one full authenticated base-manifest pass and a disk-backed evidence index, which is O(base snapshot metadata). Secretstream requires a full selected-manifest validation pass before check, entry browsing, or selective restore can act on its records.
 
+Incremental source scans reuse a parent file's descriptor spool only when its type, size, normalized mtime, and mode still match. This is explicitly an optimization, not a fresh content comparison. Reused descriptors are copied into the new session's encrypted spool, and every repository object still obtains evidence under the selected policy. Snapshot statistics expose `source_reused_files`; `--full-source-read` disables this optimization independently of `--revalidate-all`.
+
 Authenticated sidecars make snapshot listing and `latest` selection proportional to snapshot count rather than total manifest size. The initial design still writes every entry in every snapshot, so snapshot metadata output remains O(total entry count). cpcp does not claim end-to-end O(changed data) backup. Reusable manifest segments or persistent authenticated indexes are future optimizations.
 
 ### 6.6 Source selection and unsupported entries

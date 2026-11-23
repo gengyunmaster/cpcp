@@ -24,6 +24,7 @@ nlohmann::json stats_json(const repository::SnapshotStats& stats) {
         {"chunk_references", std::to_string(stats.chunk_references)},
         {"new_chunks", std::to_string(stats.new_chunks)},
         {"deduplicated_chunks", std::to_string(stats.deduplicated_chunks)},
+        {"source_reused_files", std::to_string(stats.source_reused_files)},
     };
     if (stats.selection) {
         document["policy_skipped_entries"] = std::to_string(stats.selection->policy_skipped_entries);

@@ -13,6 +13,7 @@ The current implementation provides authenticated repository configuration, encr
 - Second-level file identities and streaming continuation records
 - Encrypted snapshot streams, authenticated summaries, and bounded external chunk-set commitments
 - Deduplicated `backup add` with source mutation detection and unsupported-entry policies
+- Incremental source scans with explicit `source_reused_files` reporting and `--full-source-read`
 - Encrypted journals, bounded checkpoints, chunk-level resume, root remapping, status, and session discard
 - Idempotent main/summary publication after interruption
 - `backup check` with added/missing/type-changed detection, content identities, and repository validation

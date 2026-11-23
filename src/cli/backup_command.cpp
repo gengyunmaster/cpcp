@@ -82,6 +82,7 @@ int run_backup_add_command(
                 {"chunk_references", std::to_string(snapshot.stats.chunk_references)},
                 {"new_chunks", std::to_string(snapshot.stats.new_chunks)},
                 {"deduplicated_chunks", std::to_string(snapshot.stats.deduplicated_chunks)},
+                {"source_reused_files", std::to_string(snapshot.stats.source_reused_files)},
             }},
             {"skipped_entries", std::to_string(report->skipped_entries)},
             {"failed_entries", std::to_string(snapshot.stats.selection

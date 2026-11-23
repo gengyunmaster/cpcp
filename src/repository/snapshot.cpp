@@ -109,6 +109,7 @@ json stats_json(const SnapshotStats& stats) {
         {"chunk_references", uint_string(stats.chunk_references)},
         {"new_chunks", uint_string(stats.new_chunks)},
         {"deduplicated_chunks", uint_string(stats.deduplicated_chunks)},
+        {"source_reused_files", uint_string(stats.source_reused_files)},
         {"chunk_set_commitment", crypto::to_hex(stats.chunk_set_commitment)},
     };
     if (stats.selection) {
@@ -125,6 +126,9 @@ SnapshotStats parse_stats(const json& object) {
     stats.chunk_references = require_string_uint(object, "chunk_references");
     stats.new_chunks = require_string_uint(object, "new_chunks");
     stats.deduplicated_chunks = require_string_uint(object, "deduplicated_chunks");
+    if (object.contains("source_reused_files")) {
+        stats.source_reused_files = require_string_uint(object, "source_reused_files");
+    }
     stats.chunk_set_commitment = require_hex<32>(object, "chunk_set_commitment");
     if (object.contains("selection")) {
         const auto& selection = object.at("selection");

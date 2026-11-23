@@ -81,6 +81,7 @@ struct SnapshotStats {
     std::uint64_t chunk_references = 0;
     std::uint64_t new_chunks = 0;
     std::uint64_t deduplicated_chunks = 0;
+    std::uint64_t source_reused_files = 0;
     crypto::Digest chunk_set_commitment{};
     std::optional<SelectionStats> selection;
 };

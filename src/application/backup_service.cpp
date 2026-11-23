@@ -396,11 +396,12 @@ domain::Result<void> add_base_evidence(
     const crypto::SecureKey& master,
     const repository::SnapshotSummary& parent,
     repository::ChunkStore& store,
-    const crypto::SecureKey& id_key
+    const crypto::SecureKey& id_key,
+    const crypto::SecureKey& journal_key,
+    repository::SnapshotPathIndex* files,
+    const std::filesystem::path& spool_directory
 ) {
-    if (parent.context.storage_epoch != config.storage_epoch) {
-        return {};
-    }
+    const bool allow_evidence = parent.context.storage_epoch == config.storage_epoch;
     auto reader = repository::SnapshotReader::open(repository, config, master, parent);
     if (!reader) {
         return std::unexpected(reader.error());
@@ -409,6 +410,15 @@ domain::Result<void> add_base_evidence(
     if (!set) {
         return std::unexpected(set.error());
     }
+    if (files != nullptr) {
+        std::error_code error;
+        std::filesystem::create_directories(spool_directory, error);
+        if (error) {
+            return std::unexpected(Error{ErrorCode::permanent_io, error.message()});
+        }
+    }
+    std::unique_ptr<storage::SessionSpoolWriter> descriptors;
+    std::optional<FileInfo> current;
     while (true) {
         auto record = reader->next();
         if (!record) {
@@ -417,20 +427,71 @@ domain::Result<void> add_base_evidence(
         if (!record->has_value()) {
             break;
         }
-        if ((*record)->type != crypto::RecordType::chunk_batch) {
-            continue;
-        }
-        auto batch = repository::parse_chunk_batch(**record);
-        if (!batch) {
-            return std::unexpected(batch.error());
-        }
-        for (const auto& chunk : batch->chunks) {
-            store.allow_base_evidence(chunk.chunk_id);
-            const auto added = set->add(chunk);
+        if ((*record)->type == crypto::RecordType::file_header && files != nullptr) {
+            const auto file = repository::parse_file_header(**record);
+            if (!file) {
+                return std::unexpected(file.error());
+            }
+            const auto root = std::ranges::find_if(parent.roots, [&](const RootInfo& candidate) {
+                return candidate.index == file->root;
+            });
+            if (root == parent.roots.end()) {
+                return std::unexpected(Error{ErrorCode::integrity, "base file references an unknown root"});
+            }
+            repository::SnapshotPathMetadata metadata;
+            metadata.type = repository::SnapshotEntryType::file;
+            metadata.size = file->size;
+            metadata.mtime_seconds = file->mtime_seconds;
+            metadata.mtime_nanoseconds = file->mtime_nanoseconds;
+            metadata.mode = file->mode;
+            metadata.inode = file->sequence;
+            metadata.file_id = file->file_id;
+            const auto added = files->add(root->uuid, file->path, metadata);
             if (!added) {
                 return std::unexpected(added.error());
             }
+            current = *file;
+            descriptors = std::make_unique<storage::SessionSpoolWriter>();
+            const auto created = descriptors->create(
+                spool_directory / (std::to_string(file->sequence) + ".spool"),
+                journal_key,
+                spool_context(parent.context, parent.context.snapshot_uuid),
+                crypto::StreamDomain::session_spool
+            );
+            if (!created) {
+                return std::unexpected(created.error());
+            }
+        } else if ((*record)->type == crypto::RecordType::chunk_batch) {
+            const auto batch = repository::parse_chunk_batch(**record);
+            if (!batch) {
+                return std::unexpected(batch.error());
+            }
+            for (const auto& chunk : batch->chunks) {
+                if (allow_evidence) {
+                    store.allow_base_evidence(chunk.chunk_id);
+                }
+                const auto added = set->add(chunk);
+                if (!added) {
+                    return std::unexpected(added.error());
+                }
+            }
+            if (descriptors) {
+                const auto appended = descriptors->append(crypto::RecordType::chunk_batch, json_bytes(chunks_json(*batch)));
+                if (!appended) {
+                    return appended;
+                }
+            }
+        } else if ((*record)->type == crypto::RecordType::file_end && descriptors) {
+            const auto finalized = descriptors->finalize({});
+            if (!finalized) {
+                return std::unexpected(finalized.error());
+            }
+            descriptors.reset();
+            current.reset();
         }
+    }
+    if (current || descriptors) {
+        return std::unexpected(Error{ErrorCode::integrity, "base snapshot ends with an incomplete file"});
     }
     const auto commitment = set->finish();
     if (!commitment || *commitment != parent.stats.chunk_set_commitment) {
@@ -473,6 +534,8 @@ struct Runtime {
     repository::SnapshotWriter writer;
     repository::SnapshotPathIndex processed;
     repository::SnapshotPathIndex seen;
+    std::optional<repository::SnapshotPathIndex> base_files;
+    std::filesystem::path base_spool_directory;
     SnapshotStats stats;
     std::uint64_t skipped = 0;
     std::uint64_t failed = 0;
@@ -508,6 +571,185 @@ domain::Result<void> replay_descriptor(
     ++runtime.stats.chunk_references;
     ++runtime.chunks_this_invocation;
     return {};
+}
+
+domain::Result<bool> reuse_parent_file(
+    Runtime& runtime,
+    const RootInfo& root,
+    const std::filesystem::path& native_path,
+    const std::string& relative
+) {
+    if (!runtime.base_files || !runtime.parent) {
+        return false;
+    }
+    auto file = platform::BinaryFile::open_read(native_path);
+    if (!file) {
+        return false;
+    }
+    const auto before = file->metadata();
+    if (!before) {
+        return std::unexpected(before.error());
+    }
+    const auto previous = runtime.base_files->find(root.uuid, relative);
+    if (!previous) {
+        return std::unexpected(previous.error());
+    }
+    if (!*previous || (*previous)->type != repository::SnapshotEntryType::file
+        || before->size != (*previous)->size
+        || before->mtime_seconds != (*previous)->mtime_seconds
+        || before->mtime_nanoseconds != (*previous)->mtime_nanoseconds
+        || before->mode != (*previous)->mode) {
+        return false;
+    }
+
+    FileInfo info;
+    info.sequence = runtime.next_file++;
+    info.root = root.index;
+    info.path = relative;
+    info.size = (*previous)->size;
+    info.file_id = (*previous)->file_id;
+    info.mtime_seconds = (*previous)->mtime_seconds;
+    info.mtime_nanoseconds = (*previous)->mtime_nanoseconds;
+    info.mode = (*previous)->mode;
+    info.chunk_count = info.size / runtime.config.chunk_size
+        + (info.size % runtime.config.chunk_size == 0 ? 0 : 1);
+    storage::SessionSpoolReader preflight;
+    const auto preflight_opened = preflight.open(
+        runtime.base_spool_directory / (std::to_string((*previous)->inode) + ".spool"),
+        runtime.journal_key,
+        spool_context(runtime.parent->context, runtime.parent->context.snapshot_uuid),
+        crypto::StreamDomain::session_spool
+    );
+    if (!preflight_opened) {
+        return std::unexpected(preflight_opened.error());
+    }
+    while (true) {
+        auto record = preflight.next();
+        if (!record) {
+            return std::unexpected(record.error());
+        }
+        if (!record->has_value()) {
+            break;
+        }
+        if ((*record)->type != crypto::RecordType::chunk_batch) {
+            continue;
+        }
+        const auto batch = repository::parse_chunk_batch(**record);
+        if (!batch) {
+            return std::unexpected(batch.error());
+        }
+        for (const auto& descriptor : batch->chunks) {
+            const auto present = runtime.store.has_object(descriptor.chunk_id);
+            if (!present) {
+                return std::unexpected(present.error());
+            }
+            if (!*present) {
+                return false;
+            }
+            const auto validated = runtime.store.reuse(descriptor);
+            if (!validated) {
+                return std::unexpected(validated.error());
+            }
+        }
+    }
+    const auto spool_uuid = crypto::random_uuid();
+    storage::SessionSpoolWriter session_descriptors;
+    const auto created = session_descriptors.create(
+        spool_path(runtime.repository, runtime.spec.context.session_uuid, spool_uuid),
+        runtime.journal_key,
+        spool_context(runtime.spec.context, spool_uuid),
+        crypto::StreamDomain::session_spool
+    );
+    if (!created) {
+        return std::unexpected(created.error());
+    }
+    const auto begun = runtime.journal.append(JournalRecordType::file_begin, {
+        {"sequence", std::to_string(info.sequence)},
+        {"root", root.index},
+        {"path", relative},
+        {"source", source_json(*before)},
+    }, true);
+    if (!begun) {
+        return std::unexpected(begun.error());
+    }
+    auto appended = runtime.writer.append_file_header(info);
+    if (!appended) {
+        return std::unexpected(appended.error());
+    }
+    storage::SessionSpoolReader parent_descriptors;
+    const auto opened = parent_descriptors.open(
+        runtime.base_spool_directory / (std::to_string((*previous)->inode) + ".spool"),
+        runtime.journal_key,
+        spool_context(runtime.parent->context, runtime.parent->context.snapshot_uuid),
+        crypto::StreamDomain::session_spool
+    );
+    if (!opened) {
+        return std::unexpected(opened.error());
+    }
+    std::uint64_t chunk_count = 0;
+    while (true) {
+        auto record = parent_descriptors.next();
+        if (!record) {
+            return std::unexpected(record.error());
+        }
+        if (!record->has_value()) {
+            break;
+        }
+        if ((*record)->type != crypto::RecordType::chunk_batch) {
+            continue;
+        }
+        auto batch = repository::parse_chunk_batch(**record);
+        if (!batch) {
+            return std::unexpected(batch.error());
+        }
+        batch->file = info.sequence;
+        for (const auto& descriptor : batch->chunks) {
+            const auto reused = runtime.store.reuse(descriptor);
+            if (!reused) {
+                return std::unexpected(reused.error());
+            }
+            const auto added = runtime.chunk_set.add(descriptor);
+            if (!added) {
+                return std::unexpected(added.error());
+            }
+            ++runtime.stats.chunk_references;
+            ++runtime.stats.deduplicated_chunks;
+            ++chunk_count;
+        }
+        const auto spooled = session_descriptors.append(crypto::RecordType::chunk_batch, json_bytes(chunks_json(*batch)));
+        if (!spooled) {
+            return std::unexpected(spooled.error());
+        }
+        appended = runtime.writer.append_chunk_batch(*batch);
+        if (!appended) {
+            return std::unexpected(appended.error());
+        }
+    }
+    if (chunk_count != info.chunk_count) {
+        return std::unexpected(Error{ErrorCode::integrity, "base file chunk count mismatch"});
+    }
+    const auto finalized = session_descriptors.finalize({});
+    if (!finalized) {
+        return std::unexpected(finalized.error());
+    }
+    appended = runtime.writer.append_file_end(FileEnd{info.sequence, info.chunk_count, info.file_id});
+    if (!appended) {
+        return std::unexpected(appended.error());
+    }
+    const auto completed = runtime.journal.append(JournalRecordType::file_complete, {
+        {"file", file_json(info)},
+        {"source", source_json(*before)},
+        {"spool", hex(spool_uuid)},
+        {"new_chunks", 0},
+        {"deduplicated_chunks", chunk_count},
+    }, true);
+    if (!completed) {
+        return std::unexpected(completed.error());
+    }
+    ++runtime.stats.files;
+    ++runtime.stats.source_reused_files;
+    runtime.stats.logical_bytes += info.size;
+    return true;
 }
 
 domain::Result<void> capture_file(
@@ -1179,8 +1421,22 @@ domain::Result<BackupReport> execute(Runtime runtime, bool resumed) {
                 }
                 continue;
             }
+            const bool resume_active = active && active->info.root == root.index && active->info.path == relative;
+            if (!resume_active) {
+                const auto reused = reuse_parent_file(runtime, root, entry.path(), relative);
+                if (!reused) {
+                    return std::unexpected(reused.error());
+                }
+                if (*reused) {
+                    const auto advanced = advance();
+                    if (!advanced) {
+                        return std::unexpected(advanced.error());
+                    }
+                    continue;
+                }
+            }
             std::optional<ActiveFile> current;
-            if (active && active->info.root == root.index && active->info.path == relative) {
+            if (resume_active) {
                 current.emplace(std::move(*active));
                 active.reset();
             }
@@ -1284,6 +1540,7 @@ domain::Result<Runtime> make_runtime(
     std::optional<repository::SnapshotSummary> parent,
     repository::SessionJournal journal,
     bool revalidate_all,
+    bool full_source_read,
     std::uint64_t interrupt_after,
     bool interrupt_main
 ) {
@@ -1303,12 +1560,6 @@ domain::Result<Runtime> make_runtime(
     auto journal_key = crypto::derive_key(unlocked->master_key, crypto::KeyPurpose::journal_encryption);
     if (!journal_key) {
         return std::unexpected(journal_key.error());
-    }
-    if (parent) {
-        const auto evidence = add_base_evidence(repository, unlocked->config, unlocked->master_key, *parent, *store, *id_key);
-        if (!evidence) {
-            return std::unexpected(evidence.error());
-        }
     }
     auto chunk_set = repository::ChunkSetBuilder::create(repository / "tmp" / "new-chunk-set", *id_key);
     if (!chunk_set) {
@@ -1336,6 +1587,37 @@ domain::Result<Runtime> make_runtime(
     if (!seen) {
         return std::unexpected(seen.error());
     }
+    std::optional<repository::SnapshotPathIndex> base_files;
+    const auto base_spool_directory = temporary / "processed" / "base-files";
+    if (parent) {
+        if (!full_source_read) {
+            auto index = repository::SnapshotPathIndex::create(temporary / "base-index", *id_key);
+            if (!index) {
+                return std::unexpected(index.error());
+            }
+            base_files.emplace(std::move(index).value());
+        }
+        const auto evidence = add_base_evidence(
+            repository,
+            unlocked->config,
+            unlocked->master_key,
+            *parent,
+            *store,
+            *id_key,
+            *journal_key,
+            base_files ? &*base_files : nullptr,
+            base_spool_directory
+        );
+        if (!evidence) {
+            return std::unexpected(evidence.error());
+        }
+        if (base_files) {
+            const auto finished = base_files->finish();
+            if (!finished) {
+                return std::unexpected(finished.error());
+            }
+        }
+    }
     return Runtime{
         repository,
         std::move(unlocked->config),
@@ -1350,6 +1632,8 @@ domain::Result<Runtime> make_runtime(
         std::move(writer).value(),
         std::move(processed).value(),
         std::move(seen).value(),
+        std::move(base_files),
+        base_spool_directory,
         {},
         0,
         0,
@@ -1448,7 +1732,7 @@ domain::Result<BackupReport> backup_add(
     if (!begun) {
         return std::unexpected(begun.error());
     }
-    auto runtime = make_runtime(repository, password, std::move(spec), std::move(parent), std::move(journal).value(), options.revalidate_all, options.interrupt_after_chunks_for_testing, options.interrupt_after_main_for_testing);
+    auto runtime = make_runtime(repository, password, std::move(spec), std::move(parent), std::move(journal).value(), options.revalidate_all, options.full_source_read, options.interrupt_after_chunks_for_testing, options.interrupt_after_main_for_testing);
     if (!runtime) {
         return std::unexpected(runtime.error());
     }
@@ -1524,7 +1808,7 @@ domain::Result<BackupReport> backup_resume(
         }
         parent = *found;
     }
-    auto runtime = make_runtime(repository, password, std::move(*spec), std::move(parent), std::move(journal).value(), options.revalidate_all, options.interrupt_after_chunks_for_testing, options.interrupt_after_main_for_testing);
+    auto runtime = make_runtime(repository, password, std::move(*spec), std::move(parent), std::move(journal).value(), options.revalidate_all, false, options.interrupt_after_chunks_for_testing, options.interrupt_after_main_for_testing);
     if (!runtime) {
         return std::unexpected(runtime.error());
     }

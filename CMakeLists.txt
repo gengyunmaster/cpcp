@@ -178,6 +178,7 @@ if(BUILD_TESTING)
         tests/integration/backup_service_test.cpp
         tests/integration/browse_service_test.cpp
         tests/integration/check_service_test.cpp
+        tests/integration/incremental_backup_test.cpp
         tests/integration/key_service_test.cpp
         tests/integration/resume_service_test.cpp
         tests/integration/validation_cache_test.cpp

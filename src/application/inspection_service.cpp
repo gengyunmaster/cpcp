@@ -76,6 +76,7 @@ bool same_stats(
         && left.chunk_references == right.chunk_references
         && left.new_chunks == right.new_chunks
         && left.deduplicated_chunks == right.deduplicated_chunks
+        && left.source_reused_files == right.source_reused_files
         && left.chunk_set_commitment == right.chunk_set_commitment
         && left.selection.has_value() == right.selection.has_value()
         && (!left.selection || !right.selection

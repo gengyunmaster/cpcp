@@ -254,6 +254,18 @@ domain::Result<ChunkMetadata> ChunkStore::reuse(const crypto::ChunkDescriptor& d
     return chunk;
 }
 
+domain::Result<bool> ChunkStore::has_object(const crypto::Digest& id) const {
+    std::error_code error;
+    const auto status = std::filesystem::symlink_status(chunk_path(id), error);
+    if (error == std::errc::no_such_file_or_directory) {
+        return false;
+    }
+    if (error) {
+        return std::unexpected(Error{ErrorCode::permanent_io, error.message()});
+    }
+    return true;
+}
+
 domain::Result<crypto::Bytes> ChunkStore::get(const ChunkMetadata& chunk) {
     auto metadata = check_metadata(chunk);
     if (!metadata) {

@@ -55,6 +55,13 @@ TEST_CASE("native binary files write flush and read exact bytes") {
     std::array<std::byte, 2> tail{};
     REQUIRE(reader.read_exact(tail));
     REQUIRE(tail == std::array<std::byte, 2>{std::byte{2}, std::byte{255}});
+    REQUIRE(reader.close());
+
+    auto updater = BinaryFile::open_read_write(path).value();
+    REQUIRE(updater.truncate(2));
+    REQUIRE(updater.flush());
+    REQUIRE(updater.close());
+    REQUIRE(std::filesystem::file_size(path) == 2);
 }
 
 TEST_CASE("native no-replace publication preserves an existing destination") {

@@ -22,6 +22,7 @@ class BinaryFile {
 public:
     static domain::Result<BinaryFile> create_new(const std::filesystem::path& path);
     static domain::Result<BinaryFile> open_read(const std::filesystem::path& path);
+    static domain::Result<BinaryFile> open_read_write(const std::filesystem::path& path);
 
     BinaryFile(const BinaryFile&) = delete;
     BinaryFile& operator=(const BinaryFile&) = delete;
@@ -33,6 +34,7 @@ public:
     domain::Result<std::size_t> read_some(std::span<std::byte> output);
     domain::Result<void> read_exact(std::span<std::byte> output);
     domain::Result<void> seek(std::uint64_t offset);
+    domain::Result<void> truncate(std::uint64_t size);
     domain::Result<void> flush();
     domain::Result<void> close();
     domain::Result<FileMetadata> metadata() const;

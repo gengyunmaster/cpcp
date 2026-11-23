@@ -84,6 +84,7 @@ add_library(cpcp_repository STATIC
     src/repository/chunk_store.cpp
     src/repository/config.cpp
     src/repository/config_io.cpp
+    src/repository/journal.cpp
     src/repository/snapshot.cpp
     src/repository/snapshot_index.cpp
     src/repository/snapshot_records.cpp
@@ -151,6 +152,7 @@ if(BUILD_TESTING)
         tests/unit/chunk_set_test.cpp
         tests/unit/chunk_store_test.cpp
         tests/unit/config_test.cpp
+        tests/unit/journal_test.cpp
         tests/unit/snapshot_test.cpp
         tests/unit/snapshot_index_test.cpp
     )

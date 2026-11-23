@@ -113,6 +113,39 @@ domain::Result<BinaryFile> BinaryFile::open_read(const std::filesystem::path& pa
 #endif
 }
 
+domain::Result<BinaryFile> BinaryFile::open_read_write(const std::filesystem::path& path) {
+#ifdef _WIN32
+    HANDLE handle = CreateFileW(
+        path.c_str(),
+        GENERIC_READ | GENERIC_WRITE,
+        FILE_SHARE_READ,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr
+    );
+    if (handle == INVALID_HANDLE_VALUE) {
+        return std::unexpected(Error{ErrorCode::permanent_io, "CreateFileW failed"});
+    }
+    return BinaryFile(reinterpret_cast<std::intptr_t>(handle));
+#else
+    int flags = O_RDWR | O_CLOEXEC;
+#ifdef O_NOFOLLOW
+    flags |= O_NOFOLLOW;
+#endif
+    const int handle = open(path.c_str(), flags);
+    if (handle < 0) {
+        return std::unexpected(Error{ErrorCode::permanent_io, native_error(errno)});
+    }
+    struct stat status {};
+    if (fstat(handle, &status) != 0 || !S_ISREG(status.st_mode)) {
+        ::close(handle);
+        return std::unexpected(Error{ErrorCode::permanent_io, "file is not a regular file"});
+    }
+    return BinaryFile(handle);
+#endif
+}
+
 BinaryFile::BinaryFile(BinaryFile&& other) noexcept
     : handle_(std::exchange(other.handle_, -1)) {
 }
@@ -242,6 +275,26 @@ domain::Result<void> BinaryFile::seek(std::uint64_t offset) {
         positioned = lseek(static_cast<int>(handle_), static_cast<off_t>(offset), SEEK_SET);
     } while (positioned < 0 && errno == EINTR);
     if (positioned < 0) {
+        return std::unexpected(Error{ErrorCode::permanent_io, native_error(errno)});
+    }
+#endif
+    return {};
+}
+
+domain::Result<void> BinaryFile::truncate(std::uint64_t size) {
+    const auto positioned = seek(size);
+    if (!positioned) {
+        return positioned;
+    }
+#ifdef _WIN32
+    if (!SetEndOfFile(reinterpret_cast<HANDLE>(handle_))) {
+        return std::unexpected(Error{ErrorCode::permanent_io, "SetEndOfFile failed"});
+    }
+#else
+    if (size > static_cast<std::uint64_t>(std::numeric_limits<off_t>::max())) {
+        return std::unexpected(Error{ErrorCode::permanent_io, "file size is out of range"});
+    }
+    if (ftruncate(static_cast<int>(handle_), static_cast<off_t>(size)) != 0) {
         return std::unexpected(Error{ErrorCode::permanent_io, native_error(errno)});
     }
 #endif

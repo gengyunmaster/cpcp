@@ -168,6 +168,7 @@ if(BUILD_TESTING)
 
     add_executable(cpcp_backup_tests
         tests/integration/backup_service_test.cpp
+        tests/integration/browse_service_test.cpp
     )
     target_link_libraries(cpcp_backup_tests PRIVATE
         cpcp_application
@@ -245,6 +246,14 @@ if(BUILD_TESTING)
             -DCPCP_EXECUTABLE=$<TARGET_FILE:cpcp>
             -DCPCP_PROBE_DIR=${CMAKE_CURRENT_BINARY_DIR}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/partial_cli.cmake
+    )
+
+    add_test(
+        NAME snapshot_browse_cli
+        COMMAND ${CMAKE_COMMAND}
+            -DCPCP_EXECUTABLE=$<TARGET_FILE:cpcp>
+            -DCPCP_PROBE_DIR=${CMAKE_CURRENT_BINARY_DIR}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/snapshot_browse_cli.cmake
     )
 
     add_test(

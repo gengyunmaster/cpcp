@@ -134,6 +134,45 @@ int run(int argc, char** argv) {
         command_result = run_snapshot_show_command(inspection_options, show_generation);
     });
 
+    auto* ls = snapshot->add_subcommand("ls", "List authenticated snapshot entries");
+    std::string browse_selector;
+    std::string browse_root;
+    application::BrowseOptions browse_options;
+    ls->add_option("snapshot", browse_selector)->required();
+    ls->add_option("--root", browse_root, "Root selector: index:<n> or label:<name>");
+    ls->add_option("--path", browse_options.path_prefix, "Limit results to a root-relative path prefix");
+    add_inspection_options(ls);
+    ls->add_flag("--ndjson", inspection_options.ndjson, "Stream newline-delimited JSON entries");
+    ls->callback([&] {
+        browse_options.glob.clear();
+        command_result = run_snapshot_browse_command(
+            inspection_options,
+            browse_selector,
+            browse_root,
+            browse_options
+        );
+    });
+
+    auto* find = snapshot->add_subcommand("find", "Find authenticated snapshot entries");
+    std::string find_selector;
+    std::string find_pattern;
+    std::string find_root;
+    application::BrowseOptions find_options;
+    find->add_option("snapshot", find_selector)->required();
+    find->add_option("pattern", find_pattern, "Glob with * and ? wildcards")->required();
+    find->add_option("--root", find_root, "Root selector: index:<n> or label:<name>");
+    add_inspection_options(find);
+    find->add_flag("--ndjson", inspection_options.ndjson, "Stream newline-delimited JSON entries");
+    find->callback([&] {
+        find_options.glob = find_pattern;
+        command_result = run_snapshot_browse_command(
+            inspection_options,
+            find_selector,
+            find_root,
+            find_options
+        );
+    });
+
     auto* restore = snapshot->add_subcommand("restore", "Restore snapshot entries");
     std::string restore_selector;
     application::RestoreOptions restore_options;

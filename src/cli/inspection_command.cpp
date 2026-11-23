@@ -57,6 +57,43 @@ nlohmann::json summary_json(const repository::SnapshotSummary& summary) {
     };
 }
 
+domain::Result<application::SnapshotRequest> parse_snapshot_request(const std::string& selector) {
+    application::SnapshotRequest request;
+    if (selector == "latest") {
+        return request;
+    }
+    if (selector == "latest-complete") {
+        request.latest_complete = true;
+        return request;
+    }
+    std::uint64_t generation = 0;
+    const auto parsed = std::from_chars(
+        selector.data(),
+        selector.data() + selector.size(),
+        generation
+    );
+    if (selector.empty() || parsed.ec != std::errc{} || parsed.ptr != selector.data() + selector.size()) {
+        return std::unexpected(Error{ErrorCode::usage, "invalid snapshot generation"});
+    }
+    request.generation = generation;
+    return request;
+}
+
+nlohmann::json entry_json(const application::SnapshotEntry& entry) {
+    return {
+        {"type", entry.type},
+        {"root", entry.root},
+        {"root_label", entry.root_label},
+        {"path", entry.path},
+        {"size", std::to_string(entry.size)},
+        {"mtime", {
+            {"seconds", std::to_string(entry.mtime_seconds)},
+            {"nanoseconds", entry.mtime_nanoseconds},
+        }},
+        {"mode", entry.mode},
+    };
+}
+
 }
 
 int run_snapshot_list_command(const InspectionCommandOptions& options) {
@@ -160,25 +197,16 @@ int run_restore_command(
     if (!password) {
         return report_error(password.error());
     }
-    std::optional<std::uint64_t> generation;
-    if (selector != "latest" && selector != "latest-complete") {
-        std::uint64_t value = 0;
-        const auto parsed = std::from_chars(
-            selector.data(),
-            selector.data() + selector.size(),
-            value
-        );
-        if (parsed.ec != std::errc{} || parsed.ptr != selector.data() + selector.size()) {
-            return report_error(Error{ErrorCode::usage, "invalid snapshot generation"});
-        }
-        generation = value;
+    const auto request = parse_snapshot_request(selector);
+    if (!request) {
+        return report_error(request.error());
     }
     restore.repo_read_only = options.repo_read_only;
-    restore.latest_complete = selector == "latest-complete";
+    restore.latest_complete = request->latest_complete;
     auto report = application::restore_snapshot(
         options.repository,
         *password,
-        generation,
+        request->generation,
         restore
     );
     if (!report) {
@@ -232,6 +260,118 @@ int run_verify_command(
     } else {
         std::cout << "Verified " << report->snapshots << " snapshots and "
                   << report->chunks << " chunk references\n";
+    }
+    return 0;
+}
+
+int run_snapshot_browse_command(
+    const InspectionCommandOptions& options,
+    const std::string& selector,
+    const std::string& root_selector,
+    application::BrowseOptions browse
+) {
+    if (options.config.json && options.ndjson) {
+        return report_error(Error{ErrorCode::usage, "--json and --ndjson are mutually exclusive"});
+    }
+    const auto request = parse_snapshot_request(selector);
+    if (!request) {
+        return report_error(request.error());
+    }
+    browse.snapshot = *request;
+    if (!root_selector.empty()) {
+        if (root_selector.starts_with("index:")) {
+            std::uint32_t index = 0;
+            const auto* first = root_selector.data() + 6;
+            const auto* last = root_selector.data() + root_selector.size();
+            const auto parsed = std::from_chars(first, last, index);
+            if (parsed.ec != std::errc{} || parsed.ptr != last) {
+                return report_error(Error{ErrorCode::usage, "invalid root index"});
+            }
+            browse.root = index;
+        } else if (root_selector.starts_with("label:") && root_selector.size() > 6) {
+            browse.root_label = root_selector.substr(6);
+        } else {
+            return report_error(Error{ErrorCode::usage, "root selector must use index:<n> or label:<name>"});
+        }
+    }
+
+    auto password = application::read_password(
+        options.config.password_file,
+        !options.config.json && !options.ndjson
+    );
+    if (!password) {
+        return report_error(password.error());
+    }
+
+    constexpr std::size_t json_entry_limit = 4096;
+    auto entries = nlohmann::json::array();
+    bool header_written = false;
+    const auto write_header = [&] {
+        if (options.ndjson && !header_written) {
+            std::cout << nlohmann::json{
+                {"schema", "cpcp.snapshot-entries-header.v1"},
+                {"operation", browse.glob.empty() ? "ls" : "find"},
+            }.dump() << '\n';
+            header_written = true;
+        }
+    };
+    const auto sink = [&](const application::SnapshotEntry& entry) -> domain::Result<void> {
+        write_header();
+        if (options.config.json) {
+            if (entries.size() == json_entry_limit) {
+                return std::unexpected(Error{
+                    ErrorCode::usage,
+                    "snapshot result exceeds the bounded --json limit; use --ndjson",
+                });
+            }
+            entries.push_back(entry_json(entry));
+        } else if (options.ndjson) {
+            auto document = entry_json(entry);
+            document["schema"] = "cpcp.snapshot-entry.v1";
+            std::cout << document.dump() << '\n';
+        } else {
+            std::cout << entry.type << "  " << entry.root_label << '/'
+                      << entry.path << "  " << entry.size << " bytes\n";
+        }
+        if (!std::cout) {
+            return std::unexpected(Error{ErrorCode::permanent_io, "failed to write snapshot entries"});
+        }
+        return {};
+    };
+
+    const auto report = application::browse_snapshot(
+        options.repository,
+        *password,
+        browse,
+        options.repo_read_only,
+        sink
+    );
+    if (!report) {
+        return report_error(report.error());
+    }
+    write_header();
+    if (options.config.json) {
+        std::cout << nlohmann::json{
+            {"schema", "cpcp.snapshot-entries.v1"},
+            {"snapshot", std::to_string(report->snapshot_generation)},
+            {"snapshot_status", report->snapshot_status},
+            {"entries", entries},
+            {"verification_scope", "full-authenticated-manifest"},
+        }.dump(2) << '\n';
+    } else if (options.ndjson) {
+        std::cout << nlohmann::json{
+            {"schema", "cpcp.snapshot-entries-summary.v1"},
+            {"snapshot", std::to_string(report->snapshot_generation)},
+            {"snapshot_status", report->snapshot_status},
+            {"entries", std::to_string(report->entries)},
+            {"verification_scope", "full-authenticated-manifest"},
+        }.dump() << '\n';
+    } else {
+        std::cout << "Listed " << report->entries << " entries from snapshot "
+                  << report->snapshot_generation << " (" << report->snapshot_status << ")\n";
+    }
+    if (!std::cout) {
+        return report_error(Error{ErrorCode::permanent_io, "failed to write snapshot report"});
     }
     return 0;
 }

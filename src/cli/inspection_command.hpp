@@ -12,6 +12,7 @@ struct InspectionCommandOptions {
     std::filesystem::path repository = ".";
     ConfigCommandOptions config;
     bool repo_read_only = false;
+    bool ndjson = false;
 };
 
 int run_snapshot_list_command(const InspectionCommandOptions& options);
@@ -27,6 +28,12 @@ int run_restore_command(
 int run_verify_command(
     const InspectionCommandOptions& options,
     bool deep
+);
+int run_snapshot_browse_command(
+    const InspectionCommandOptions& options,
+    const std::string& selector,
+    const std::string& root_selector,
+    application::BrowseOptions browse
 );
 
 }

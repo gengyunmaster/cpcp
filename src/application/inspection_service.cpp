@@ -315,6 +315,49 @@ domain::Result<void> apply_metadata(
 
 }
 
+domain::Result<repository::SnapshotSummary> resolve_snapshot(
+    const std::vector<repository::SnapshotSummary>& snapshots,
+    const SnapshotRequest& request
+) {
+    if (snapshots.empty()) {
+        return std::unexpected(Error{ErrorCode::permanent_io, "no snapshots are available"});
+    }
+    if (request.generation) {
+        const auto selected = std::ranges::find_if(snapshots, [&](const repository::SnapshotSummary& candidate) {
+            return candidate.context.generation == *request.generation;
+        });
+        if (selected == snapshots.end()) {
+            return std::unexpected(Error{ErrorCode::permanent_io, "snapshot generation was not found"});
+        }
+        return *selected;
+    }
+    if (request.latest_complete) {
+        auto reversed = std::views::reverse(snapshots);
+        const auto selected = std::ranges::find_if(
+            reversed,
+            [](const repository::SnapshotSummary& candidate) {
+                return candidate.status == "complete";
+            }
+        );
+        if (selected == reversed.end()) {
+            return std::unexpected(Error{ErrorCode::permanent_io, "no complete snapshot is available"});
+        }
+        return *selected;
+    }
+    return snapshots.back();
+}
+
+domain::Result<std::uint64_t> verify_snapshot_manifest(
+    const std::filesystem::path& repository,
+    const repository::RepositoryConfig& config,
+    const crypto::SecureKey& master,
+    const repository::SnapshotSummary& summary,
+    repository::ChunkStore& store,
+    bool deep
+) {
+    return verify_snapshot(repository, config, master, summary, store, deep);
+}
+
 domain::Result<RestoreReport> restore_snapshot(
     const std::filesystem::path& repository,
     const crypto::SecretBytes& password,
@@ -338,31 +381,14 @@ domain::Result<RestoreReport> restore_snapshot(
         return std::unexpected(locks.error());
     }
     auto summaries = repository::list_snapshots(repository, unlocked->config, unlocked->master_key);
-    if (!summaries || summaries->empty()) {
-        return std::unexpected(Error{ErrorCode::permanent_io, "no snapshots are available"});
+    if (!summaries) {
+        return std::unexpected(summaries.error());
     }
-    auto summary = summaries->end();
-    if (generation) {
-        summary = std::ranges::find_if(*summaries, [&](const repository::SnapshotSummary& candidate) {
-            return candidate.context.generation == *generation;
-        });
-    } else if (options.latest_complete) {
-        auto reversed = std::views::reverse(*summaries);
-        const auto complete = std::ranges::find_if(
-            reversed,
-            [](const repository::SnapshotSummary& candidate) {
-                return candidate.status == "complete";
-            }
-        );
-        if (complete != reversed.end()) {
-            summary = std::prev(complete.base());
-        }
-    } else {
-        summary = std::ranges::prev(summaries->end());
+    const auto selected = resolve_snapshot(*summaries, SnapshotRequest{generation, options.latest_complete});
+    if (!selected) {
+        return std::unexpected(selected.error());
     }
-    if (summary == summaries->end()) {
-        return std::unexpected(Error{ErrorCode::permanent_io, "snapshot generation was not found"});
-    }
+    const auto summary = std::make_optional(*selected);
     if (summary->status == "partial" && !options.allow_partial) {
         return std::unexpected(Error{ErrorCode::usage, "restoring a partial snapshot requires --allow-partial"});
     }
@@ -668,6 +694,181 @@ domain::Result<VerifyReport> verify_repository(
         report.chunks += *checked;
     }
     return report;
+}
+
+domain::Result<BrowseReport> browse_snapshot(
+    const std::filesystem::path& repository,
+    const crypto::SecretBytes& password,
+    const BrowseOptions& options,
+    bool repo_read_only,
+    const SnapshotEntrySink& sink
+) {
+    if (!sink) {
+        return std::unexpected(Error{ErrorCode::usage, "a snapshot entry consumer is required"});
+    }
+    if (options.root && options.root_label) {
+        return std::unexpected(Error{ErrorCode::usage, "root index and label are mutually exclusive"});
+    }
+    if (!options.path_prefix.empty() && !safe_relative(options.path_prefix, false)) {
+        return std::unexpected(Error{ErrorCode::usage, "browse path must remain relative to its root"});
+    }
+    if (options.glob.size() > 512) {
+        return std::unexpected(Error{ErrorCode::usage, "snapshot find pattern is too long"});
+    }
+
+    auto unlocked = repository::load_config(repository, password);
+    if (!unlocked) {
+        return std::unexpected(unlocked.error());
+    }
+    auto locks = repo_read_only
+        ? domain::Result<platform::RepositoryLocks>{}
+        : platform::RepositoryLocks::read(repository);
+    if (!locks) {
+        return std::unexpected(locks.error());
+    }
+    const auto summaries = repository::list_snapshots(repository, unlocked->config, unlocked->master_key);
+    if (!summaries) {
+        return std::unexpected(summaries.error());
+    }
+    const auto selected = resolve_snapshot(*summaries, options.snapshot);
+    if (!selected) {
+        return std::unexpected(selected.error());
+    }
+    if (options.root && !std::ranges::any_of(selected->roots, [&](const repository::RootInfo& root) {
+        return root.index == *options.root;
+    })) {
+        return std::unexpected(Error{ErrorCode::usage, "requested root index does not exist"});
+    }
+    if (options.root_label && !std::ranges::any_of(selected->roots, [&](const repository::RootInfo& root) {
+        return root.label == *options.root_label;
+    })) {
+        return std::unexpected(Error{ErrorCode::usage, "requested root label does not exist"});
+    }
+
+    auto store = repository::ChunkStore::create(repository, unlocked->config, unlocked->master_key);
+    if (!store) {
+        return std::unexpected(store.error());
+    }
+    const auto verified = verify_snapshot(repository, unlocked->config, unlocked->master_key, *selected, *store, false);
+    if (!verified) {
+        return std::unexpected(verified.error());
+    }
+    auto reader = repository::SnapshotReader::open(repository, unlocked->config, unlocked->master_key, *selected);
+    if (!reader) {
+        return std::unexpected(reader.error());
+    }
+
+    const auto glob_match = [](std::string_view pattern, std::string_view text) {
+        std::size_t pattern_index = 0;
+        std::size_t text_index = 0;
+        std::size_t star = std::string_view::npos;
+        std::size_t star_text = 0;
+        while (text_index < text.size()) {
+            if (pattern_index < pattern.size()
+                && (pattern[pattern_index] == '?' || pattern[pattern_index] == text[text_index])) {
+                ++pattern_index;
+                ++text_index;
+            } else if (pattern_index < pattern.size() && pattern[pattern_index] == '*') {
+                star = pattern_index++;
+                star_text = text_index;
+            } else if (star != std::string_view::npos) {
+                pattern_index = star + 1;
+                text_index = ++star_text;
+            } else {
+                return false;
+            }
+        }
+        while (pattern_index < pattern.size() && pattern[pattern_index] == '*') {
+            ++pattern_index;
+        }
+        return pattern_index == pattern.size();
+    };
+
+    std::uint64_t matches = 0;
+    const auto emit = [&](SnapshotEntry entry) -> domain::Result<void> {
+        if (options.root && entry.root != *options.root) {
+            return {};
+        }
+        if (options.root_label && entry.root_label != *options.root_label) {
+            return {};
+        }
+        if (!options.path_prefix.empty()
+            && entry.path != options.path_prefix
+            && !(entry.path.starts_with(options.path_prefix)
+                && entry.path.size() > options.path_prefix.size()
+                && entry.path[options.path_prefix.size()] == '/')) {
+            return {};
+        }
+        if (!options.glob.empty() && !glob_match(options.glob, entry.path)) {
+            return {};
+        }
+        const auto accepted = sink(entry);
+        if (!accepted) {
+            return accepted;
+        }
+        ++matches;
+        return {};
+    };
+
+    while (true) {
+        auto record = reader->next();
+        if (!record) {
+            return std::unexpected(record.error());
+        }
+        if (!record->has_value()) {
+            break;
+        }
+        if ((*record)->type == crypto::RecordType::directory) {
+            const auto directory = repository::parse_directory(**record);
+            if (!directory) {
+                return std::unexpected(directory.error());
+            }
+            const auto root = std::ranges::find_if(selected->roots, [&](const repository::RootInfo& candidate) {
+                return candidate.index == directory->root;
+            });
+            if (root == selected->roots.end()) {
+                return std::unexpected(Error{ErrorCode::integrity, "directory references an unknown root"});
+            }
+            const auto emitted = emit(SnapshotEntry{
+                "directory",
+                directory->root,
+                root->label,
+                directory->path,
+                0,
+                directory->mtime_seconds,
+                directory->mtime_nanoseconds,
+                directory->mode,
+            });
+            if (!emitted) {
+                return std::unexpected(emitted.error());
+            }
+        } else if ((*record)->type == crypto::RecordType::file_header) {
+            const auto file = repository::parse_file_header(**record);
+            if (!file) {
+                return std::unexpected(file.error());
+            }
+            const auto root = std::ranges::find_if(selected->roots, [&](const repository::RootInfo& candidate) {
+                return candidate.index == file->root;
+            });
+            if (root == selected->roots.end()) {
+                return std::unexpected(Error{ErrorCode::integrity, "file references an unknown root"});
+            }
+            const auto emitted = emit(SnapshotEntry{
+                "file",
+                file->root,
+                root->label,
+                file->path,
+                file->size,
+                file->mtime_seconds,
+                file->mtime_nanoseconds,
+                file->mode,
+            });
+            if (!emitted) {
+                return std::unexpected(emitted.error());
+            }
+        }
+    }
+    return BrowseReport{selected->context.generation, selected->status, matches};
 }
 
 }

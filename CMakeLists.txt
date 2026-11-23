@@ -27,6 +27,15 @@ add_library(cpcp_domain INTERFACE)
 target_include_directories(cpcp_domain INTERFACE src)
 target_compile_features(cpcp_domain INTERFACE cxx_std_23)
 
+add_library(cpcp_platform STATIC
+    src/platform/binary_file.cpp
+)
+target_link_libraries(cpcp_platform PUBLIC cpcp_domain)
+target_compile_definitions(cpcp_platform INTERFACE
+    CPCP_TEST_TEMP_DIR="${CMAKE_CURRENT_BINARY_DIR}"
+)
+cpcp_enable_warnings(cpcp_platform)
+
 add_library(cpcp_crypto STATIC
     src/crypto/aead.cpp
     src/crypto/content_id.cpp
@@ -71,6 +80,15 @@ if(BUILD_TESTING)
     )
     cpcp_enable_warnings(cpcp_unit_tests)
 
+    add_executable(cpcp_native_file_tests
+        tests/integration/native_file_test.cpp
+    )
+    target_link_libraries(cpcp_native_file_tests PRIVATE
+        cpcp_platform
+        Catch2::Catch2WithMain
+    )
+    cpcp_enable_warnings(cpcp_native_file_tests)
+
     add_executable(cpcp_simulation_tests
         tests/simulation/simulated_filesystem_test.cpp
     )
@@ -82,6 +100,7 @@ if(BUILD_TESTING)
 
     include(Catch)
     catch_discover_tests(cpcp_unit_tests)
+    catch_discover_tests(cpcp_native_file_tests)
     catch_discover_tests(cpcp_simulation_tests)
 
     add_test(

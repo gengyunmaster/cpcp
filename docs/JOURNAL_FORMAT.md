@@ -88,7 +88,7 @@ Tests cover chained append/replay, checkpoint recovery, ciphertext confidentiali
 
 ## 5. Session payloads and resume invariants
 
-The session record reserves the snapshot UUID, generation, lineage, session UUID, storage epoch, root UUIDs, selection policy, and optional parent UUID. A resumed session authenticates this reservation before allocating or publishing anything. A conflicting active parent or a later generation blocks resume rather than renumbering implicitly.
+The session record reserves the snapshot UUID, generation, lineage, session UUID, storage epoch, root UUIDs, selection policy, optional tag, and optional parent UUID. Tags are also authenticated in the main snapshot header and summary, and are compared during idempotent recovery. A resumed session authenticates this reservation before allocating or publishing anything. A conflicting active parent or a later generation blocks resume rather than renumbering implicitly.
 
 A file-begin record carries the root-relative path, file sequence, and opened-handle source identity. Chunk records carry a bounded `cpcp.chunk-batch.v1` value and new/deduplicated counters. A file-complete record carries the authenticated file header, source identity, descriptor-spool UUID, and counters. Descriptor spools use the existing encrypted `CPSP` format under `sessions/`.
 

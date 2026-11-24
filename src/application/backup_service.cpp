@@ -44,6 +44,7 @@ struct SessionSpec {
     std::vector<RootInfo> roots;
     repository::SelectionPolicy selection;
     bool allow_partial = false;
+    std::string tag;
     bool has_parent = false;
     domain::Uuid parent_uuid{};
 };
@@ -164,6 +165,9 @@ domain::Result<SessionSpec> parse_session(const json& payload) {
             spec.selection.exclusions = payload.at("exclusions").get<std::vector<std::string>>();
         }
         spec.allow_partial = payload.at("allow_partial").get<bool>();
+        if (payload.contains("tag")) {
+            spec.tag = payload.at("tag").get<std::string>();
+        }
         spec.has_parent = payload.at("has_parent").get<bool>();
         if (spec.has_parent) {
             spec.parent_uuid = domain::hex_decode<16>(payload.at("parent").get<std::string>()).value();
@@ -194,6 +198,7 @@ json session_json(const SessionSpec& spec, bool has_parent) {
         {"exclusions", spec.selection.exclusions},
         {"symlinks", spec.selection.symlinks},
         {"allow_partial", spec.allow_partial},
+        {"tag", spec.tag},
         {"has_parent", has_parent},
         {"parent", has_parent ? json(hex(spec.parent_uuid)) : json(nullptr)},
     };
@@ -2006,7 +2011,8 @@ domain::Result<Runtime> make_runtime(
         spec.context,
         spec.context.session_uuid,
         parent,
-        spec.selection
+        spec.selection,
+        spec.tag
     );
     if (!writer) {
         return std::unexpected(writer.error());
@@ -2145,6 +2151,7 @@ domain::Result<BackupReport> backup_add(
         true,
     };
     spec.allow_partial = options.allow_partial;
+    spec.tag = options.tag;
     spec.has_parent = parent.has_value();
     if (parent) {
         spec.parent_uuid = parent->context.snapshot_uuid;

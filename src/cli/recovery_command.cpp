@@ -35,7 +35,7 @@ int run_quarantine_command(
     if (!options.dry_run && !options.yes) {
         return report_error(Error{ErrorCode::usage, "quarantine requires --dry-run or --yes"});
     }
-    auto password = application::read_password(options.config.password_file, !options.config.json);
+    auto password = application::read_password(options.config.password_file, !options.config.json, options.config.password_fd);
     if (!password) {
         return report_error(password.error());
     }
@@ -90,7 +90,7 @@ int run_repair_summary_command(
     if (!options.yes) {
         return report_error(Error{ErrorCode::usage, "summary repair requires --yes"});
     }
-    auto password = application::read_password(options.config.password_file, !options.config.json);
+    auto password = application::read_password(options.config.password_file, !options.config.json, options.config.password_fd);
     if (!password) {
         return report_error(password.error());
     }
@@ -116,7 +116,7 @@ int run_repair_config_command(const RecoveryCommandOptions& options) {
     if (!options.yes) {
         return report_error(Error{ErrorCode::usage, "configuration repair requires --yes"});
     }
-    auto password = application::read_password(options.config.password_file, !options.config.json);
+    auto password = application::read_password(options.config.password_file, !options.config.json, options.config.password_fd);
     if (!password) {
         return report_error(password.error());
     }

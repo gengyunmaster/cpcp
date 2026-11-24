@@ -45,7 +45,7 @@ int print_report(
 }
 
 int run_snapshot_forget_command(const RecoveryCommandOptions& options, std::uint64_t generation) {
-    auto password = application::read_password(options.config.password_file, !options.config.json);
+    auto password = application::read_password(options.config.password_file, !options.config.json, options.config.password_fd);
     if (!password) {
         return report_error(password.error());
     }
@@ -63,7 +63,7 @@ int run_snapshot_forget_command(const RecoveryCommandOptions& options, std::uint
 }
 
 int run_purge_quarantine_command(const RecoveryCommandOptions& options, std::chrono::seconds grace) {
-    auto password = application::read_password(options.config.password_file, !options.config.json);
+    auto password = application::read_password(options.config.password_file, !options.config.json, options.config.password_fd);
     if (!password) {
         return report_error(password.error());
     }
@@ -81,7 +81,7 @@ int run_purge_quarantine_command(const RecoveryCommandOptions& options, std::chr
 }
 
 int run_gc_command(const RecoveryCommandOptions& options, std::chrono::seconds grace) {
-    auto password = application::read_password(options.config.password_file, !options.config.json);
+    auto password = application::read_password(options.config.password_file, !options.config.json, options.config.password_fd);
     if (!password) {
         return report_error(password.error());
     }

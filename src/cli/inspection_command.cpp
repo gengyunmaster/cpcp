@@ -50,6 +50,7 @@ nlohmann::json summary_json(const repository::SnapshotSummary& summary) {
         {"snapshot_uuid", domain::hex_encode(summary.context.snapshot_uuid)},
         {"lineage_uuid", domain::hex_encode(summary.context.lineage_uuid)},
         {"status", summary.status},
+        {"tag", summary.tag.empty() ? nlohmann::json(nullptr) : nlohmann::json(summary.tag)},
         {"selection_policy", {
             {"unsupported", summary.selection_policy.unsupported},
             {"one_file_system", summary.selection_policy.one_file_system},
@@ -104,7 +105,7 @@ nlohmann::json entry_json(const application::SnapshotEntry& entry) {
 
 int run_snapshot_list_command(const InspectionCommandOptions& options) {
     warn_lockless_repository(options.repo_read_only);
-    auto password = application::read_password(options.config.password_file, !options.config.json);
+    auto password = application::read_password(options.config.password_file, !options.config.json, options.config.password_fd);
     if (!password) {
         return report_error(password.error());
     }
@@ -151,7 +152,7 @@ int run_snapshot_show_command(
     std::uint64_t generation
 ) {
     warn_lockless_repository(options.repo_read_only);
-    auto password = application::read_password(options.config.password_file, !options.config.json);
+    auto password = application::read_password(options.config.password_file, !options.config.json, options.config.password_fd);
     if (!password) {
         return report_error(password.error());
     }
@@ -202,7 +203,7 @@ int run_restore_command(
     application::RestoreOptions restore
 ) {
     warn_lockless_repository(options.repo_read_only);
-    auto password = application::read_password(options.config.password_file, !options.config.json);
+    auto password = application::read_password(options.config.password_file, !options.config.json, options.config.password_fd);
     if (!password) {
         return report_error(password.error());
     }
@@ -254,7 +255,7 @@ int run_verify_command(
     bool refresh_validation_cache
 ) {
     warn_lockless_repository(options.repo_read_only);
-    auto password = application::read_password(options.config.password_file, !options.config.json);
+    auto password = application::read_password(options.config.password_file, !options.config.json, options.config.password_fd);
     if (!password) {
         return report_error(password.error());
     }
@@ -367,7 +368,7 @@ int run_snapshot_diff_command(
 
 int run_repo_stats_command(const InspectionCommandOptions& options) {
     warn_lockless_repository(options.repo_read_only);
-    auto password = application::read_password(options.config.password_file, !options.config.json);
+    auto password = application::read_password(options.config.password_file, !options.config.json, options.config.password_fd);
     if (!password) {
         return report_error(password.error());
     }
@@ -436,7 +437,8 @@ int run_snapshot_browse_command(
 
     auto password = application::read_password(
         options.config.password_file,
-        !options.config.json && !options.ndjson
+        !options.config.json && !options.ndjson,
+        options.config.password_fd
     );
     if (!password) {
         return report_error(password.error());

@@ -4,6 +4,7 @@
 #include "platform/binary_file.hpp"
 
 #include <array>
+#include <cerrno>
 #include <filesystem>
 #include <iostream>
 #include <span>
@@ -11,6 +12,7 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include <io.h>
 #else
 #include <termios.h>
 #include <unistd.h>
@@ -88,6 +90,32 @@ domain::Result<crypto::SecretBytes> read_file(const std::filesystem::path& path)
     return from_line(std::move(line));
 }
 
+domain::Result<crypto::SecretBytes> read_descriptor(int descriptor) {
+    std::string line;
+    std::array<char, 1025> buffer{};
+    while (true) {
+#ifdef _WIN32
+        const auto count = _read(descriptor, buffer.data(), static_cast<unsigned int>(buffer.size()));
+#else
+        ssize_t count = 0;
+        do {
+            count = ::read(descriptor, buffer.data(), buffer.size());
+        } while (count < 0 && errno == EINTR);
+#endif
+        if (count < 0) {
+            return std::unexpected(Error{ErrorCode::permanent_io, "could not read the inherited password descriptor"});
+        }
+        if (count == 0) {
+            break;
+        }
+        line.append(buffer.data(), static_cast<std::size_t>(count));
+        if (line.size() > 1024) {
+            return std::unexpected(Error{ErrorCode::usage, "password exceeds 1024 bytes"});
+        }
+    }
+    return from_line(std::move(line));
+}
+
 domain::Result<crypto::SecretBytes> read_prompt(std::string_view prompt) {
 #ifndef _WIN32
     if (isatty(STDIN_FILENO) == 0) {
@@ -132,8 +160,15 @@ domain::Result<crypto::SecretBytes> read_prompt(std::string_view prompt) {
 
 domain::Result<crypto::SecretBytes> read_password(
     const std::optional<std::filesystem::path>& password_file,
-    bool allow_prompt
+    bool allow_prompt,
+    std::optional<int> password_fd
 ) {
+    if (password_file && password_fd) {
+        return std::unexpected(Error{ErrorCode::usage, "--password-file and --password-fd are mutually exclusive"});
+    }
+    if (password_fd) {
+        return read_descriptor(*password_fd);
+    }
     if (password_file) {
         return read_file(*password_file);
     }

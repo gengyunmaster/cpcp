@@ -11,7 +11,7 @@
 namespace cpcp::cli {
 
 int run_passwd_command(const KeyCommandOptions& options) {
-    auto current = application::read_password(options.password_file, !options.json);
+    auto current = application::read_password(options.password_file, !options.json, options.password_fd);
     if (!current) {
         return report_error(current.error());
     }
@@ -32,7 +32,7 @@ int run_passwd_command(const KeyCommandOptions& options) {
 }
 
 int run_key_list_command(const KeyCommandOptions& options) {
-    auto current = application::read_password(options.password_file, !options.json);
+    auto current = application::read_password(options.password_file, !options.json, options.password_fd);
     if (!current) {
         return report_error(current.error());
     }
@@ -60,7 +60,7 @@ int run_key_list_command(const KeyCommandOptions& options) {
 }
 
 int run_key_add_password_command(const KeyCommandOptions& options, const std::optional<std::string>& slot_id) {
-    auto current = application::read_password(options.password_file, !options.json);
+    auto current = application::read_password(options.password_file, !options.json, options.password_fd);
     if (!current) {
         return report_error(current.error());
     }
@@ -87,7 +87,7 @@ int run_key_add_recovery_command(const KeyCommandOptions& options, bool show_key
             "adding a recovery key requires --show-key so it can be stored offline",
         });
     }
-    auto current = application::read_password(options.password_file, !options.json);
+    auto current = application::read_password(options.password_file, !options.json, options.password_fd);
     if (!current) {
         return report_error(current.error());
     }
@@ -110,7 +110,7 @@ int run_key_add_recovery_command(const KeyCommandOptions& options, bool show_key
 }
 
 int run_key_remove_command(const KeyCommandOptions& options, const std::string& slot_id, bool confirmed) {
-    auto current = application::read_password(options.password_file, !options.json);
+    auto current = application::read_password(options.password_file, !options.json, options.password_fd);
     if (!current) {
         return report_error(current.error());
     }
@@ -127,7 +127,7 @@ int run_key_remove_command(const KeyCommandOptions& options, const std::string& 
 }
 
 int run_rotate_epoch_command(const KeyCommandOptions& options) {
-    auto current = application::read_password(options.password_file, !options.json);
+    auto current = application::read_password(options.password_file, !options.json, options.password_fd);
     if (!current) {
         return report_error(current.error());
     }

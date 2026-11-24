@@ -114,6 +114,7 @@ struct SnapshotSummary {
     bool has_parent = false;
     std::string status = "complete";
     SelectionPolicy selection_policy;
+    std::string tag;
     std::int64_t created_seconds = 0;
     std::uint32_t created_nanoseconds = 0;
     std::vector<RootInfo> roots;
@@ -159,7 +160,8 @@ public:
         crypto::SnapshotContext context,
         domain::Uuid session_uuid,
         std::optional<SnapshotSummary> parent = std::nullopt,
-        SelectionPolicy selection_policy = {}
+        SelectionPolicy selection_policy = {},
+        std::string tag = {}
     );
 
     domain::Result<void> append_root(const RootInfo& root);
@@ -243,6 +245,7 @@ struct SnapshotHeaderInfo {
     std::uint32_t created_nanoseconds = 0;
     std::string tool_version;
     SelectionPolicy selection_policy;
+    std::string tag;
     bool has_parent = false;
     domain::Uuid parent_uuid{};
     crypto::Digest parent_summary_digest{};

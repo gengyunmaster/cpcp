@@ -124,6 +124,9 @@ domain::Result<SnapshotHeaderInfo> parse_snapshot_header(
         header.created_seconds = require_int_string(created, "seconds");
         header.created_nanoseconds = static_cast<std::uint32_t>(require_uint(created, "nanoseconds"));
         header.tool_version = require_string(document, "tool_version");
+        if (document.contains("tag") && !document.at("tag").is_null()) {
+            header.tag = require_string(document, "tag");
+        }
         if (document.contains("selection")) {
             const auto& selection = document.at("selection");
             header.selection_policy.unsupported = require_string(selection, "unsupported");

@@ -11,6 +11,7 @@ namespace cpcp::cli {
 
 struct ConfigCommandOptions {
     std::optional<std::filesystem::path> password_file;
+    std::optional<int> password_fd;
     std::string kdf_memory = "64MiB";
     std::uint64_t kdf_iterations = 3;
     std::string chunk_size = "8MiB";

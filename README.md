@@ -24,6 +24,7 @@ The current implementation provides authenticated repository configuration, encr
 - `snapshot list`, `show`, authenticated `ls` / `find` / `diff`, and full or selective `restore`
 - Restore dry-run planning, prefixed root selectors, deterministic name sanitization, and NDJSON path maps
 - Backup dry-run plans that never create chunks, journals, sessions, or snapshots
+- Authenticated snapshot tags and inherited `--password-fd` credentials
 - Bounded JSON and streaming NDJSON snapshot-entry reports
 - Structural and deep `repo verify`, with explicit authenticated validation-cache refresh
 - `repo stats` with logical, stored, and filesystem-allocated byte accounting

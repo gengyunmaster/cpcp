@@ -243,11 +243,13 @@ TEST_CASE("an explicit older base preserves lineage and allocates the global nex
 
     cpcp::application::BackupOptions options;
     options.base_generation = first.snapshot.context.generation;
+    options.tag = "weekly";
     const auto third = cpcp::application::backup_add(repository, password(), {source}, options).value();
     REQUIRE(third.snapshot.context.generation == second.snapshot.context.generation + 1);
     REQUIRE(third.snapshot.has_parent);
     REQUIRE(third.snapshot.parent_uuid == first.snapshot.context.snapshot_uuid);
     REQUIRE(third.snapshot.context.lineage_uuid == first.snapshot.context.lineage_uuid);
+    REQUIRE(third.snapshot.tag == "weekly");
 
     options.no_parent = true;
     const auto conflicting = cpcp::application::backup_add(repository, password(), {source}, options);

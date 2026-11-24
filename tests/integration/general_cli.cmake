@@ -64,4 +64,12 @@ endif()
 if(NOT read_error MATCHES "without locks" OR read_error MATCHES "\"schema\"")
     message(FATAL_ERROR "Lockless warning was missing or polluted stdout: ${read_error}")
 endif()
+execute_process(
+    COMMAND bash -c "\"${CPCP_EXECUTABLE}\" repo verify --repo \"${repo}\" --password-fd 3 3< \"${password}\""
+    RESULT_VARIABLE fd_result
+    ERROR_VARIABLE fd_error
+)
+if(NOT fd_result EQUAL 0)
+    message(FATAL_ERROR "Inherited password descriptor failed: ${fd_result} ${fd_error}")
+endif()
 file(REMOVE_RECURSE "${root}")

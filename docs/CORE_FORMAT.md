@@ -205,7 +205,7 @@ Core version 1 includes strict bounded JSON record batches, authenticated config
 
 Journal and resume formats, validation-cache formats, retention metadata, and packed objects remain separately versioned feature work rather than hidden changes to this core format.
 
-## 8. Selection-policy extension
+## 8. Selection-policy and tag extensions
 
 Snapshots written with selection-failure support retain the v1 envelope and add these authenticated fields:
 
@@ -218,3 +218,5 @@ A `cpcp.failure.v1` record uses record type 8 and contains `root`, `path`, and `
 The selection fields are optional when reading older v1 snapshots. Their absence denotes the original `unsupported=skip`, one-filesystem policy without authenticated selection counters. New writers always emit them. Readers reject unknown policies, inconsistent final status, and mismatched counts.
 
 A failed required entry prevents publication unless the caller explicitly allows a partial snapshot. A published partial snapshot remains partial when selected by `latest`; restoration requires explicit approval, while `latest-complete` selects the newest complete generation.
+
+An optional snapshot `tag` is stored in both the summary and main header and checked during repair or idempotent finalization. Null and an absent field denote no tag; an empty tag is not emitted by writers.

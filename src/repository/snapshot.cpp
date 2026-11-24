@@ -177,6 +177,7 @@ json summary_json(const SnapshotSummary& summary) {
         {"session_uuid", domain::hex_encode(summary.session_uuid)},
         {"status", summary.status},
         {"selection_policy", selection_policy_json(summary.selection_policy)},
+        {"tag", summary.tag.empty() ? json(nullptr) : json(summary.tag)},
         {"has_parent", summary.has_parent},
         {"parent_uuid", summary.has_parent
             ? json(domain::hex_encode(summary.parent_uuid))
@@ -212,6 +213,9 @@ SnapshotSummary parse_summary(const json& document) {
     }
     if (document.contains("selection_policy")) {
         summary.selection_policy = parse_selection_policy(document.at("selection_policy"));
+    }
+    if (document.contains("tag") && !document.at("tag").is_null()) {
+        summary.tag = require_string(document, "tag");
     }
     summary.has_parent = document.at("has_parent").get<bool>();
     if (summary.has_parent) {
@@ -478,7 +482,8 @@ domain::Result<SnapshotWriter> SnapshotWriter::create(
     crypto::SnapshotContext context,
     domain::Uuid session_uuid,
     std::optional<SnapshotSummary> parent,
-    SelectionPolicy selection_policy
+    SelectionPolicy selection_policy,
+    std::string tag
 ) {
     if (selection_policy.unsupported != "skip" && selection_policy.unsupported != "fail") {
         return std::unexpected(Error{ErrorCode::usage, "invalid unsupported-entry policy"});
@@ -488,6 +493,7 @@ domain::Result<SnapshotWriter> SnapshotWriter::create(
     summary.context = context;
     summary.session_uuid = context.session_uuid;
     summary.selection_policy = std::move(selection_policy);
+    summary.tag = std::move(tag);
     if (parent) {
         summary.has_parent = true;
         summary.parent_uuid = parent->context.snapshot_uuid;
@@ -551,6 +557,7 @@ domain::Result<SnapshotWriter> SnapshotWriter::create(
             ? json(crypto::to_hex(result.summary_.parent_summary_digest))
             : json(nullptr)},
         {"selection", selection_policy_json(result.summary_.selection_policy)},
+        {"tag", result.summary_.tag.empty() ? json(nullptr) : json(result.summary_.tag)},
     });
     if (!appended) {
         return std::unexpected(appended.error());
@@ -745,7 +752,8 @@ domain::Result<SnapshotSummary> SnapshotWriter::finish(
                     || header->selection_policy.unsupported != summary_.selection_policy.unsupported
                     || header->selection_policy.one_file_system != summary_.selection_policy.one_file_system
                     || header->selection_policy.exclusions != summary_.selection_policy.exclusions
-                    || header->selection_policy.symlinks != summary_.selection_policy.symlinks) {
+                    || header->selection_policy.symlinks != summary_.selection_policy.symlinks
+                    || header->tag != summary_.tag) {
                     return std::unexpected(Error{ErrorCode::integrity, "snapshot header semantics mismatch"});
                 }
                 header_seen = true;

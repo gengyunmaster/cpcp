@@ -58,7 +58,7 @@ int run_backup_add_command(
     const std::vector<std::filesystem::path>& roots,
     const BackupCommandOptions& options
 ) {
-    auto password = application::read_password(options.config.password_file, !options.config.json);
+    auto password = application::read_password(options.config.password_file, !options.config.json, options.config.password_fd);
     if (!password) {
         return report_error(password.error());
     }
@@ -75,6 +75,7 @@ int run_backup_add_command(
             {"snapshot_uuid", domain::hex_encode(snapshot.context.snapshot_uuid)},
             {"lineage_uuid", domain::hex_encode(snapshot.context.lineage_uuid)},
             {"status", snapshot.status},
+            {"tag", snapshot.tag.empty() ? nlohmann::json(nullptr) : nlohmann::json(snapshot.tag)},
             {"stats", {
                 {"files", std::to_string(snapshot.stats.files)},
                 {"directories", std::to_string(snapshot.stats.directories)},
@@ -145,7 +146,8 @@ int run_backup_check_command(
 
     auto password = application::read_password(
         options.config.password_file,
-        !options.config.json && !options.ndjson
+        !options.config.json && !options.ndjson,
+        options.config.password_fd
     );
     if (!password) {
         return report_error(password.error());
@@ -239,7 +241,7 @@ int run_backup_check_command(
 }
 
 int run_backup_status_command(const SessionCommandOptions& options) {
-    auto password = application::read_password(options.config.password_file, !options.config.json);
+    auto password = application::read_password(options.config.password_file, !options.config.json, options.config.password_fd);
     if (!password) {
         return report_error(password.error());
     }
@@ -295,7 +297,7 @@ int run_backup_resume_command(
     if (!session_uuid) {
         return report_error(session_uuid.error());
     }
-    auto password = application::read_password(options.config.password_file, !options.config.json);
+    auto password = application::read_password(options.config.password_file, !options.config.json, options.config.password_fd);
     if (!password) {
         return report_error(password.error());
     }
@@ -333,7 +335,7 @@ int run_backup_discard_command(
     if (!session_uuid) {
         return report_error(session_uuid.error());
     }
-    auto password = application::read_password(options.config.password_file, !options.config.json);
+    auto password = application::read_password(options.config.password_file, !options.config.json, options.config.password_fd);
     if (!password) {
         return report_error(password.error());
     }

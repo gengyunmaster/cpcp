@@ -11,7 +11,8 @@ namespace cpcp::application {
 
 domain::Result<crypto::SecretBytes> read_password(
     const std::optional<std::filesystem::path>& password_file,
-    bool allow_prompt
+    bool allow_prompt,
+    std::optional<int> password_fd = std::nullopt
 );
 domain::Result<crypto::SecretBytes> read_password_prompt(
     const std::optional<std::filesystem::path>& password_file,

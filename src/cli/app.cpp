@@ -116,6 +116,7 @@ int run(int argc, char** argv) {
             config_options.password_file,
             "Read the repository password from a protected file"
         );
+        command->add_option("--password-fd", config_options.password_fd, "Read the password from an inherited file descriptor");
         command->add_flag("--json", config_options.json, "Emit JSON output");
     };
 
@@ -179,6 +180,7 @@ int run(int argc, char** argv) {
     add->add_option("--base", backup_options.base_generation, "Use an explicit base snapshot generation");
     add->add_flag("--allow-partial", backup_options.allow_partial, "Publish a partial snapshot when required entries fail");
     add->add_flag("--dry-run", backup_options.dry_run, "Read sources and plan changes without repository writes");
+    add->add_option("--tag", backup_options.tag, "Attach an authenticated snapshot tag");
     add->add_option("--unsupported", unsupported_policy, "Policy for unsupported entries: skip or fail")
         ->default_val(unsupported_policy)
         ->check(CLI::IsMember({"skip", "fail"}));
@@ -225,6 +227,7 @@ int run(int argc, char** argv) {
     const auto add_session_options = [&](CLI::App* command) {
         command->add_option("--repo", session_options.repository)->default_val(session_options.repository);
         command->add_option("--password-file", session_options.config.password_file);
+        command->add_option("--password-fd", session_options.config.password_fd);
         command->add_flag("--json", session_options.config.json);
     };
     auto* status = backup->add_subcommand("status", "List resumable backup sessions");
@@ -282,6 +285,7 @@ int run(int argc, char** argv) {
     const auto add_inspection_options = [&](CLI::App* command) {
         command->add_option("--repo", inspection_options.repository)->default_val(inspection_options.repository);
         command->add_option("--password-file", inspection_options.config.password_file);
+        command->add_option("--password-fd", inspection_options.config.password_fd);
         command->add_flag("--json", inspection_options.config.json);
         command->add_flag("--repo-read-only", inspection_options.repo_read_only);
     };
@@ -434,6 +438,7 @@ int run(int argc, char** argv) {
     quarantine->add_option("--repo", recovery_options.repository)
         ->default_val(recovery_options.repository);
     quarantine->add_option("--password-file", recovery_options.config.password_file);
+    quarantine->add_option("--password-fd", recovery_options.config.password_fd);
     quarantine->add_flag("--json", recovery_options.config.json);
     quarantine->add_flag("--dry-run", recovery_options.dry_run);
     quarantine->add_flag("--yes", recovery_options.yes);
@@ -447,6 +452,7 @@ int run(int argc, char** argv) {
     repair_summary->add_option("--repo", recovery_options.repository)
         ->default_val(recovery_options.repository);
     repair_summary->add_option("--password-file", recovery_options.config.password_file);
+    repair_summary->add_option("--password-fd", recovery_options.config.password_fd);
     repair_summary->add_flag("--json", recovery_options.config.json);
     repair_summary->add_flag("--yes", recovery_options.yes);
     repair_summary->callback([&] {
@@ -457,6 +463,7 @@ int run(int argc, char** argv) {
     repair_config->add_option("--repo", recovery_options.repository)
         ->default_val(recovery_options.repository);
     repair_config->add_option("--password-file", recovery_options.config.password_file);
+    repair_config->add_option("--password-fd", recovery_options.config.password_fd);
     repair_config->add_flag("--json", recovery_options.config.json);
     repair_config->add_flag("--yes", recovery_options.yes);
     repair_config->callback([&] {
@@ -468,6 +475,7 @@ int run(int argc, char** argv) {
     forget->add_option("generation", forget_generation)->required();
     forget->add_option("--repo", recovery_options.repository)->default_val(recovery_options.repository);
     forget->add_option("--password-file", recovery_options.config.password_file);
+    forget->add_option("--password-fd", recovery_options.config.password_fd);
     forget->add_flag("--json", recovery_options.config.json);
     forget->add_flag("--dry-run", recovery_options.dry_run);
     forget->add_flag("--yes", recovery_options.yes);
@@ -480,6 +488,7 @@ int run(int argc, char** argv) {
     purge_quarantine->add_option("--grace-seconds", grace_seconds)->default_val(grace_seconds);
     purge_quarantine->add_option("--repo", recovery_options.repository)->default_val(recovery_options.repository);
     purge_quarantine->add_option("--password-file", recovery_options.config.password_file);
+    purge_quarantine->add_option("--password-fd", recovery_options.config.password_fd);
     purge_quarantine->add_flag("--json", recovery_options.config.json);
     purge_quarantine->add_flag("--dry-run", recovery_options.dry_run);
     purge_quarantine->add_flag("--yes", recovery_options.yes);
@@ -491,6 +500,7 @@ int run(int argc, char** argv) {
     gc->add_option("--grace-seconds", grace_seconds)->default_val(grace_seconds);
     gc->add_option("--repo", recovery_options.repository)->default_val(recovery_options.repository);
     gc->add_option("--password-file", recovery_options.config.password_file);
+    gc->add_option("--password-fd", recovery_options.config.password_fd);
     gc->add_flag("--json", recovery_options.config.json);
     gc->add_flag("--dry-run", recovery_options.dry_run);
     gc->add_flag("--yes", recovery_options.yes);
@@ -504,6 +514,7 @@ int run(int argc, char** argv) {
     const auto add_key_options = [&](CLI::App* command) {
         command->add_option("--repo", key_options.repository)->default_val(key_options.repository);
         command->add_option("--password-file", key_options.password_file);
+        command->add_option("--password-fd", key_options.password_fd);
         command->add_option("--new-password-file", key_options.new_password_file);
         command->add_flag("--json", key_options.json);
     };

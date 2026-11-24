@@ -9,6 +9,7 @@ namespace cpcp::cli {
 struct KeyCommandOptions {
     std::filesystem::path repository = ".";
     std::optional<std::filesystem::path> password_file;
+    std::optional<int> password_fd;
     std::optional<std::filesystem::path> new_password_file;
     bool json = false;
 };

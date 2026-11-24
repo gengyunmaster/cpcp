@@ -81,7 +81,7 @@ int run_init_command(
         return report_error(Error{ErrorCode::usage, "invalid chunk size"});
     }
 
-    auto password = application::read_password(options.password_file, !options.json);
+    auto password = application::read_password(options.password_file, !options.json, options.password_fd);
     if (!password) {
         return report_error(password.error());
     }
@@ -111,7 +111,7 @@ int run_export_header_command(
     const std::filesystem::path& output,
     const ConfigCommandOptions& options
 ) {
-    auto password = application::read_password(options.password_file, !options.json);
+    auto password = application::read_password(options.password_file, !options.json, options.password_fd);
     if (!password) {
         return report_error(password.error());
     }
@@ -143,7 +143,7 @@ int run_import_header_command(
     const std::filesystem::path& repository,
     const ConfigCommandOptions& options
 ) {
-    auto password = application::read_password(options.password_file, !options.json);
+    auto password = application::read_password(options.password_file, !options.json, options.password_fd);
     if (!password) {
         return report_error(password.error());
     }

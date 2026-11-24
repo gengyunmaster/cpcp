@@ -108,6 +108,7 @@ add_library(cpcp_application STATIC
     src/application/diff_service.cpp
     src/application/inspection_service.cpp
     src/application/key_service.cpp
+    src/application/lifecycle_service.cpp
     src/application/recovery_service.cpp
     src/application/repository_service.cpp
 )
@@ -124,6 +125,7 @@ add_library(cpcp_cli STATIC
     src/cli/errors.cpp
     src/cli/inspection_command.cpp
     src/cli/key_command.cpp
+    src/cli/lifecycle_command.cpp
     src/cli/probe_command.cpp
     src/cli/recovery_command.cpp
 )
@@ -187,6 +189,7 @@ if(BUILD_TESTING)
         tests/integration/exclusion_test.cpp
         tests/integration/incremental_backup_test.cpp
         tests/integration/key_service_test.cpp
+        tests/integration/lifecycle_service_test.cpp
         tests/integration/resume_service_test.cpp
         tests/integration/validation_cache_test.cpp
     )

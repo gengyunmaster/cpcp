@@ -4,6 +4,7 @@
 #include "cli/backup_command.hpp"
 #include "cli/inspection_command.hpp"
 #include "cli/key_command.hpp"
+#include "cli/lifecycle_command.hpp"
 #include "cli/probe_command.hpp"
 #include "cli/recovery_command.hpp"
 #include "cli/errors.hpp"
@@ -12,6 +13,7 @@
 #include <CLI/CLI.hpp>
 
 #include <charconv>
+#include <chrono>
 #include <filesystem>
 #include <string>
 
@@ -104,6 +106,9 @@ int run(int argc, char** argv) {
         ->check(CLI::IsMember({"skip", "fail"}));
     add->add_option("--exclude", backup_options.exclude_patterns, "Exclude a root-relative glob with * and ?")
         ->expected(-1);
+    add->add_option("--jobs", backup_options.jobs, "Compression workers (1-8)")
+        ->default_val(backup_options.jobs)
+        ->check(CLI::Range(1, 8));
     add_password_options(add);
     add->callback([&] {
         backup_options.unsupported_fail = unsupported_policy == "fail";
@@ -153,6 +158,9 @@ int run(int argc, char** argv) {
     resume->add_option("session", resume_session)->required();
     resume->add_flag("--restart-files", resume_options.restart_files, "Reread source files instead of reusing file completions");
     resume->add_flag("--revalidate-all", resume_options.revalidate_all, "Revalidate every referenced chunk");
+    resume->add_option("--jobs", resume_options.jobs, "Compression workers (1-8)")
+        ->default_val(resume_options.jobs)
+        ->check(CLI::Range(1, 8));
     resume->add_option("--remap-root", remap_roots, "Map <root-uuid>=<new-path>")->expected(-1);
     add_session_options(resume);
     resume->callback([&] {
@@ -355,6 +363,41 @@ int run(int argc, char** argv) {
     repair_config->add_flag("--yes", recovery_options.yes);
     repair_config->callback([&] {
         command_result = run_repair_config_command(recovery_options);
+    });
+
+    auto* forget = snapshot->add_subcommand("forget", "Retire a snapshot into trash");
+    std::uint64_t forget_generation = 0;
+    forget->add_option("generation", forget_generation)->required();
+    forget->add_option("--repo", recovery_options.repository)->default_val(recovery_options.repository);
+    forget->add_option("--password-file", recovery_options.config.password_file);
+    forget->add_flag("--json", recovery_options.config.json);
+    forget->add_flag("--dry-run", recovery_options.dry_run);
+    forget->add_flag("--yes", recovery_options.yes);
+    forget->callback([&] {
+        command_result = run_snapshot_forget_command(recovery_options, forget_generation);
+    });
+
+    std::int64_t grace_seconds = 86400;
+    auto* purge_quarantine = repo->add_subcommand("purge-quarantine", "Delete expired quarantined objects");
+    purge_quarantine->add_option("--grace-seconds", grace_seconds)->default_val(grace_seconds);
+    purge_quarantine->add_option("--repo", recovery_options.repository)->default_val(recovery_options.repository);
+    purge_quarantine->add_option("--password-file", recovery_options.config.password_file);
+    purge_quarantine->add_flag("--json", recovery_options.config.json);
+    purge_quarantine->add_flag("--dry-run", recovery_options.dry_run);
+    purge_quarantine->add_flag("--yes", recovery_options.yes);
+    purge_quarantine->callback([&] {
+        command_result = run_purge_quarantine_command(recovery_options, std::chrono::seconds{grace_seconds});
+    });
+
+    auto* gc = repo->add_subcommand("gc", "Move unreachable objects to trash and expire old trash");
+    gc->add_option("--grace-seconds", grace_seconds)->default_val(grace_seconds);
+    gc->add_option("--repo", recovery_options.repository)->default_val(recovery_options.repository);
+    gc->add_option("--password-file", recovery_options.config.password_file);
+    gc->add_flag("--json", recovery_options.config.json);
+    gc->add_flag("--dry-run", recovery_options.dry_run);
+    gc->add_flag("--yes", recovery_options.yes);
+    gc->callback([&] {
+        command_result = run_gc_command(recovery_options, std::chrono::seconds{grace_seconds});
     });
 
     KeyCommandOptions key_options;

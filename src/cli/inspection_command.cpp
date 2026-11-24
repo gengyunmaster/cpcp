@@ -103,6 +103,7 @@ nlohmann::json entry_json(const application::SnapshotEntry& entry) {
 }
 
 int run_snapshot_list_command(const InspectionCommandOptions& options) {
+    warn_lockless_repository(options.repo_read_only);
     auto password = application::read_password(options.config.password_file, !options.config.json);
     if (!password) {
         return report_error(password.error());
@@ -149,6 +150,7 @@ int run_snapshot_show_command(
     const InspectionCommandOptions& options,
     std::uint64_t generation
 ) {
+    warn_lockless_repository(options.repo_read_only);
     auto password = application::read_password(options.config.password_file, !options.config.json);
     if (!password) {
         return report_error(password.error());
@@ -199,6 +201,7 @@ int run_restore_command(
     const std::string& selector,
     application::RestoreOptions restore
 ) {
+    warn_lockless_repository(options.repo_read_only);
     auto password = application::read_password(options.config.password_file, !options.config.json);
     if (!password) {
         return report_error(password.error());
@@ -250,6 +253,7 @@ int run_verify_command(
     bool deep,
     bool refresh_validation_cache
 ) {
+    warn_lockless_repository(options.repo_read_only);
     auto password = application::read_password(options.config.password_file, !options.config.json);
     if (!password) {
         return report_error(password.error());
@@ -362,11 +366,12 @@ int run_snapshot_diff_command(
 }
 
 int run_repo_stats_command(const InspectionCommandOptions& options) {
+    warn_lockless_repository(options.repo_read_only);
     auto password = application::read_password(options.config.password_file, !options.config.json);
     if (!password) {
         return report_error(password.error());
     }
-    const auto report = application::repository_statistics(options.repository, *password);
+    const auto report = application::repository_statistics(options.repository, *password, options.repo_read_only);
     if (!report) {
         return report_error(report.error());
     }
@@ -403,6 +408,7 @@ int run_snapshot_browse_command(
     const std::string& root_selector,
     application::BrowseOptions browse
 ) {
+    warn_lockless_repository(options.repo_read_only);
     if (options.config.json && options.ndjson) {
         return report_error(Error{ErrorCode::usage, "--json and --ndjson are mutually exclusive"});
     }

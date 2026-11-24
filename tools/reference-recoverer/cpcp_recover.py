@@ -738,6 +738,7 @@ def main():
             password = password[:-1]
         if not password or len(password) > 1024 or b"\n" in password or b"\r" in password:
             raise RecoverError(2, "invalid password file")
+        print("Warning: lockless repository read; exclude concurrent writers and GC", file=sys.stderr)
         recover(args.repo, args.to, password, args.generation, args.allow_partial)
     except RecoverError as error:
         print(f"Error: {error}", file=sys.stderr)

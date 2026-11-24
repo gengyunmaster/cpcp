@@ -110,6 +110,7 @@ int run_backup_check_command(
     const std::string& root_selector,
     const CheckCommandOptions& options
 ) {
+    warn_lockless_repository(options.check.repo_read_only);
     if (options.config.json && options.ndjson) {
         return report_error(domain::Error{
             domain::ErrorCode::usage,

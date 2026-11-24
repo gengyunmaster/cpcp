@@ -300,6 +300,14 @@ if(BUILD_TESTING)
     )
 
     add_test(
+        NAME general_cli
+        COMMAND ${CMAKE_COMMAND}
+            -DCPCP_EXECUTABLE=$<TARGET_FILE:cpcp>
+            -DCPCP_PROBE_DIR=${CMAKE_CURRENT_BINARY_DIR}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/general_cli.cmake
+    )
+
+    add_test(
         NAME repository_init
         COMMAND ${CMAKE_COMMAND}
             -DCPCP_EXECUTABLE=$<TARGET_FILE:cpcp>

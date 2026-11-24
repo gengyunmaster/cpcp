@@ -112,7 +112,8 @@ domain::Result<VerifyReport> verify_repository(
 
 domain::Result<RepositoryStats> repository_statistics(
     const std::filesystem::path& repository,
-    const crypto::SecretBytes& password
+    const crypto::SecretBytes& password,
+    bool repo_read_only = false
 );
 
 domain::Result<repository::SnapshotSummary> resolve_snapshot(

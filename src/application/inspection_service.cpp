@@ -394,9 +394,12 @@ domain::Result<void> apply_metadata(
 
 domain::Result<RepositoryStats> repository_statistics(
     const std::filesystem::path& repository,
-    const crypto::SecretBytes& password
+    const crypto::SecretBytes& password,
+    bool repo_read_only
 ) {
-    const auto locks = platform::RepositoryLocks::read(repository);
+    auto locks = repo_read_only
+        ? domain::Result<platform::RepositoryLocks>{}
+        : platform::RepositoryLocks::read(repository);
     if (!locks) {
         return std::unexpected(locks.error());
     }

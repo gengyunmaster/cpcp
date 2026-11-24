@@ -14,10 +14,50 @@
 
 #include <charconv>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
+#include <iostream>
+#include <optional>
 #include <string>
 
 namespace cpcp::cli {
+
+namespace {
+
+domain::Result<std::filesystem::path> discover_repository() {
+    std::error_code error;
+    auto current = std::filesystem::current_path(error);
+    if (error) {
+        return std::unexpected(domain::Error{domain::ErrorCode::permanent_io, error.message()});
+    }
+    while (true) {
+        if (std::filesystem::exists(current / "cpcp.config.json", error)
+            || std::filesystem::exists(current / "cpcp.config.backup.json", error)) {
+            return current;
+        }
+        if (error) {
+            return std::unexpected(domain::Error{domain::ErrorCode::permanent_io, error.message()});
+        }
+        const auto parent = current.parent_path();
+        if (parent == current) {
+            break;
+        }
+        current = std::move(parent);
+    }
+    return std::unexpected(domain::Error{domain::ErrorCode::permanent_io, "no parent repository was found"});
+}
+
+bool has_explicit_repository(int argc, char** argv) {
+    for (int index = 1; index < argc; ++index) {
+        if (std::string_view(argv[index]) == "--repo"
+            || std::string_view(argv[index]).starts_with("--repo=")) {
+            return true;
+        }
+    }
+    return false;
+}
+
+}
 
 int run(int argc, char** argv) {
     const auto cancellation = platform::install_cancellation_handler();
@@ -25,14 +65,51 @@ int run(int argc, char** argv) {
         return report_error(cancellation.error());
     }
 
+    bool discover = false;
+    for (int index = 1; index < argc; ++index) {
+        if (std::string_view(argv[index]) == "--discover-repo") {
+            discover = true;
+        }
+    }
+    std::filesystem::path default_repository = ".";
+    if (const auto* configured = std::getenv("CPCP_REPO"); configured != nullptr && *configured != '\0') {
+        default_repository = configured;
+    } else if (discover && !has_explicit_repository(argc, argv)) {
+        const auto found = discover_repository();
+        if (!found) {
+            return report_error(found.error());
+        }
+        default_repository = *found;
+    }
+    std::optional<std::filesystem::path> default_password_file;
+    if (const auto* configured = std::getenv("CPCP_PASSWORD_FILE"); configured != nullptr && *configured != '\0') {
+        default_password_file = std::filesystem::path(configured);
+    }
+
     CLI::App app{"Encrypted content-addressed backup CLI", "cpcp"};
     app.set_version_flag("--version", "cpcp " CPCP_VERSION);
+    bool undecorated = false;
+    bool quiet = false;
+    app.add_flag("--discover-repo", discover, "Find a repository in the current directory's parents");
+    app.add_flag("--plain", undecorated, "Disable output decoration");
+    app.add_flag("--no-color", undecorated, "Disable ANSI colors");
+    app.add_flag("--quiet", quiet, "Suppress nonessential progress");
 
     int command_result = 0;
+    auto* help = app.add_subcommand("help", "Show command help");
+    help->callback([&] {
+        std::cout << "Encrypted content-addressed backup CLI\n\ncpcp <resource> <action> [arguments] [options]\n\n";
+        for (const auto* command : app.get_subcommands()) {
+            if (command->get_name() != "help") {
+                std::cout << command->get_name() << "  " << command->get_description() << '\n';
+            }
+        }
+    });
     auto* repo = app.add_subcommand("repo", "Repository operations");
     repo->require_subcommand(1);
 
     ConfigCommandOptions config_options;
+    config_options.password_file = default_password_file;
     const auto add_password_options = [&](CLI::App* command) {
         command->add_option(
             "--password-file",
@@ -58,7 +135,7 @@ int run(int argc, char** argv) {
 
     auto* export_header = repo->add_subcommand("export-header", "Export an authenticated header");
     std::filesystem::path export_output;
-    std::filesystem::path export_repository = ".";
+    std::filesystem::path export_repository = default_repository;
     export_header->add_option("output", export_output, "Exported header path")->required();
     export_header->add_option("--repo", export_repository)
         ->default_val(export_repository);
@@ -73,7 +150,7 @@ int run(int argc, char** argv) {
 
     auto* import_header = repo->add_subcommand("import-header", "Import an authenticated header");
     std::filesystem::path import_path;
-    std::filesystem::path import_repository = ".";
+    std::filesystem::path import_repository = default_repository;
     import_header->add_option("header", import_path, "Header to import")->required();
     import_header->add_option("--repo", import_repository)
         ->default_val(import_repository);
@@ -90,7 +167,7 @@ int run(int argc, char** argv) {
     backup->require_subcommand(1);
     auto* add = backup->add_subcommand("add", "Add source trees to a snapshot");
     std::vector<std::filesystem::path> backup_roots;
-    std::filesystem::path backup_repository = ".";
+    std::filesystem::path backup_repository = default_repository;
     application::BackupOptions backup_options;
     std::string unsupported_policy = "skip";
     add->add_option("paths", backup_roots, "Source root directories")->required()->expected(-1);
@@ -121,6 +198,8 @@ int run(int argc, char** argv) {
 
     auto* check = backup->add_subcommand("check", "Compare a source tree with a snapshot");
     CheckCommandOptions check_options;
+    check_options.repository = default_repository;
+    check_options.config = config_options;
     std::string check_selector = "latest";
     std::string check_root;
     check->add_option("source", check_options.check.source, "Source directory or explicitly mapped restored tree")
@@ -141,6 +220,8 @@ int run(int argc, char** argv) {
     });
 
     SessionCommandOptions session_options;
+    session_options.repository = default_repository;
+    session_options.config = config_options;
     const auto add_session_options = [&](CLI::App* command) {
         command->add_option("--repo", session_options.repository)->default_val(session_options.repository);
         command->add_option("--password-file", session_options.config.password_file);
@@ -196,6 +277,7 @@ int run(int argc, char** argv) {
     auto* snapshot = app.add_subcommand("snapshot", "Snapshot operations");
     snapshot->require_subcommand(1);
     InspectionCommandOptions inspection_options;
+    inspection_options.repository = default_repository;
     inspection_options.config = config_options;
     const auto add_inspection_options = [&](CLI::App* command) {
         command->add_option("--repo", inspection_options.repository)->default_val(inspection_options.repository);
@@ -345,6 +427,7 @@ int run(int argc, char** argv) {
 
     auto* quarantine = repo->add_subcommand("quarantine", "Quarantine a damaged object");
     RecoveryCommandOptions recovery_options;
+    recovery_options.repository = default_repository;
     recovery_options.config = config_options;
     std::string quarantine_selector;
     quarantine->add_option("object", quarantine_selector)->required();
@@ -416,6 +499,8 @@ int run(int argc, char** argv) {
     });
 
     KeyCommandOptions key_options;
+    key_options.repository = default_repository;
+    key_options.password_file = default_password_file;
     const auto add_key_options = [&](CLI::App* command) {
         command->add_option("--repo", key_options.repository)->default_val(key_options.repository);
         command->add_option("--password-file", key_options.password_file);

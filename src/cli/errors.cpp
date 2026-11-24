@@ -34,4 +34,10 @@ int report_error(const domain::Error& error) {
     return exit_code(error.code);
 }
 
+void warn_lockless_repository(bool enabled) {
+    if (enabled) {
+        std::cerr << "Warning: reading the repository without locks; the caller must exclude concurrent writers and GC\n";
+    }
+}
+
 }

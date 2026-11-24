@@ -673,6 +673,21 @@ def restore(summary, snapshot_key, id_key, chunk_key, destination):
             current = None
             identity = None
             output = None
+        elif record_type == 10:
+            link = parse_json(payload)
+            root = next(root for root in summary["roots"] if root["index"] == link["root"])
+            if not safe_label(root["label"]) or not safe_relative(link["path"]):
+                integrity("unsafe symlink path")
+            target = destination / root["label"] / link["path"]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.exists() or target.is_symlink():
+                integrity("refusing to overwrite an existing symlink")
+            os.symlink(link["target"], target)
+            timestamp = int(link["mtime"]["seconds"]) * 1_000_000_000 + link["mtime"]["nanoseconds"]
+            try:
+                os.utime(target, ns=(timestamp, timestamp), follow_symlinks=False)
+            except (NotImplementedError, OSError) as error:
+                print(f"Warning: symlink timestamp was not restored: {error}", file=sys.stderr)
     if current is not None:
         integrity("restore ended with an incomplete file")
     while directories:
@@ -684,7 +699,7 @@ def restore(summary, snapshot_key, id_key, chunk_key, destination):
         integrity("restore digest mismatch")
 
 
-def recover(repository, destination, password, generation=None):
+def recover(repository, destination, password, generation=None, allow_partial=False):
     config, master, _ = load_config(repository, password)
     snapshot_key = kdf(master, "snapshot")
     id_key = kdf(master, "id")
@@ -698,6 +713,8 @@ def recover(repository, destination, password, generation=None):
     )
     if summary is None:
         raise RecoverError(1, "snapshot generation was not found")
+    if summary.get("status") == "partial" and not allow_partial:
+        raise RecoverError(2, "partial snapshot recovery requires --allow-partial")
     summary["repository"] = repository
     summary["chunk_size"] = config["chunk_size"]
     validate_manifest(summary, snapshot_key, id_key, chunk_key)
@@ -711,6 +728,7 @@ def main():
     parser.add_argument("--to", required=True, type=Path)
     parser.add_argument("--password-file", required=True, type=Path)
     parser.add_argument("--generation", type=int)
+    parser.add_argument("--allow-partial", action="store_true")
     args = parser.parse_args()
     try:
         password = args.password_file.read_bytes()
@@ -720,7 +738,7 @@ def main():
             password = password[:-1]
         if not password or len(password) > 1024 or b"\n" in password or b"\r" in password:
             raise RecoverError(2, "invalid password file")
-        recover(args.repo, args.to, password, args.generation)
+        recover(args.repo, args.to, password, args.generation, args.allow_partial)
     except RecoverError as error:
         print(f"Error: {error}", file=sys.stderr)
         return error.code

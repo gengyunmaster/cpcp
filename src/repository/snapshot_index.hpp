@@ -17,6 +17,7 @@ namespace cpcp::repository {
 enum class SnapshotEntryType : std::uint8_t {
     directory = 1,
     file = 2,
+    symlink = 3,
     presence = 255,
 };
 

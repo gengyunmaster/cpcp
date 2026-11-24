@@ -25,6 +25,7 @@ class RecovererTest:
         (self.source / "a.txt").write_bytes(b"hello")
         (self.source / "duplicate.txt").write_bytes(b"hello")
         (self.source / "sub" / "b.txt").write_bytes(b"world")
+        os.symlink("a.txt", self.source / "link.txt")
         self.run(self.cpcp, "repo", "init", str(self.repo),
                  "--password-file", str(self.password),
                  "--kdf-memory", "8MiB", "--kdf-iterations", "1",
@@ -65,6 +66,7 @@ def main():
         test.recover(restored)
         for relative in ("a.txt", "duplicate.txt", "empty.txt", "sub/b.txt"):
             assert (restored / "source" / relative).read_bytes() == (test.source / relative).read_bytes(), relative
+        assert os.readlink(restored / "source" / "link.txt") == "a.txt"
 
         recovery_result = test.run(
             test.cpcp, "repo", "key", "add-recovery-key",

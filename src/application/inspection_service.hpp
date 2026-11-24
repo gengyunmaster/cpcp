@@ -29,6 +29,7 @@ struct SnapshotEntry {
     std::int64_t mtime_seconds = 0;
     std::uint32_t mtime_nanoseconds = 0;
     std::uint32_t mode = 0;
+    std::string link_target;
 };
 
 struct BrowseOptions {
@@ -50,6 +51,8 @@ struct RestoreOptions {
     bool repo_read_only = false;
     bool allow_partial = false;
     bool latest_complete = false;
+    bool restore_ownership = false;
+    bool restore_privileged_bits = false;
 };
 
 struct RestoreReport {
@@ -57,6 +60,7 @@ struct RestoreReport {
     std::string snapshot_status;
     std::uint64_t files = 0;
     std::uint64_t directories = 0;
+    std::uint64_t symlinks = 0;
     std::uint64_t metadata_warnings = 0;
 };
 

@@ -21,6 +21,7 @@ nlohmann::json stats_json(const repository::SnapshotStats& stats) {
     auto document = nlohmann::json{
         {"files", std::to_string(stats.files)},
         {"directories", std::to_string(stats.directories)},
+        {"symlinks", std::to_string(stats.symlinks)},
         {"logical_bytes", std::to_string(stats.logical_bytes)},
         {"chunk_references", std::to_string(stats.chunk_references)},
         {"new_chunks", std::to_string(stats.new_chunks)},
@@ -53,6 +54,7 @@ nlohmann::json summary_json(const repository::SnapshotSummary& summary) {
             {"unsupported", summary.selection_policy.unsupported},
             {"one_file_system", summary.selection_policy.one_file_system},
             {"exclusions", summary.selection_policy.exclusions},
+            {"symlinks", summary.selection_policy.symlinks},
         }},
         {"roots", roots},
         {"stats", stats_json(summary.stats)},
@@ -94,6 +96,7 @@ nlohmann::json entry_json(const application::SnapshotEntry& entry) {
             {"nanoseconds", entry.mtime_nanoseconds},
         }},
         {"mode", entry.mode},
+        {"target", entry.type == "symlink" ? nlohmann::json(entry.link_target) : nlohmann::json(nullptr)},
     };
 }
 
@@ -223,6 +226,7 @@ int run_restore_command(
             {"snapshot_status", report->snapshot_status},
             {"files", std::to_string(report->files)},
             {"directories", std::to_string(report->directories)},
+            {"symlinks", std::to_string(report->symlinks)},
             {"metadata_warnings", std::to_string(report->metadata_warnings)},
             {"destination", restore.destination.string()},
             {"verification_scope", "full-manifest-and-selected-chunks"},

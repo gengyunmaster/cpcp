@@ -157,6 +157,9 @@ domain::Result<SessionSpec> parse_session(const json& payload) {
         }
         spec.selection.unsupported = payload.at("unsupported").get<std::string>();
         spec.selection.one_file_system = payload.at("one_file_system").get<bool>();
+        if (payload.contains("symlinks")) {
+            spec.selection.symlinks = payload.at("symlinks").get<bool>();
+        }
         if (payload.contains("exclusions")) {
             spec.selection.exclusions = payload.at("exclusions").get<std::vector<std::string>>();
         }
@@ -189,6 +192,7 @@ json session_json(const SessionSpec& spec, bool has_parent) {
         {"unsupported", spec.selection.unsupported},
         {"one_file_system", spec.selection.one_file_system},
         {"exclusions", spec.selection.exclusions},
+        {"symlinks", spec.selection.symlinks},
         {"allow_partial", spec.allow_partial},
         {"has_parent", has_parent},
         {"parent", has_parent ? json(hex(spec.parent_uuid)) : json(nullptr)},
@@ -394,6 +398,45 @@ DirectoryInfo directory_info(std::uint32_t root, std::string path, const std::fi
     };
 }
 
+repository::SymlinkInfo symlink_info(
+    std::uint32_t root,
+    std::string path,
+    const std::filesystem::path& native
+) {
+    repository::SymlinkInfo info;
+    info.root = root;
+    info.path = std::move(path);
+    info.target = std::filesystem::read_symlink(native).generic_string();
+#ifndef _WIN32
+    struct stat status {};
+    if (lstat(native.c_str(), &status) != 0) {
+        throw std::system_error(errno, std::generic_category());
+    }
+#ifdef __APPLE__
+    info.mtime_seconds = status.st_mtimespec.tv_sec;
+    info.mtime_nanoseconds = static_cast<std::uint32_t>(status.st_mtimespec.tv_nsec);
+#else
+    info.mtime_seconds = status.st_mtim.tv_sec;
+    info.mtime_nanoseconds = static_cast<std::uint32_t>(status.st_mtim.tv_nsec);
+#endif
+    info.mode = static_cast<std::uint32_t>(status.st_mode & 07777);
+#endif
+    return info;
+}
+
+domain::Result<crypto::Digest> symlink_target_id(
+    const crypto::SecureKey& id_key,
+    const std::string& target
+) {
+    domain::Bytes input;
+    for (const char value : "cpcp.symlink.v1") {
+        input.push_back(static_cast<std::byte>(static_cast<unsigned char>(value)));
+    }
+    const auto bytes = std::as_bytes(std::span(target));
+    input.insert(input.end(), bytes.begin(), bytes.end());
+    return crypto::compute_hmac_sha256(id_key, input);
+}
+
 bool same_identity(const platform::FileMetadata& left, const platform::FileMetadata& right) {
     return left.size == right.size
         && left.mtime_seconds == right.mtime_seconds
@@ -496,6 +539,13 @@ domain::Result<void> add_base_evidence(
             if (!added) {
                 return std::unexpected(added.error());
             }
+            if (descriptors) {
+                const auto finalized = descriptors->finalize({});
+                if (!finalized) {
+                    return std::unexpected(finalized.error());
+                }
+                descriptors.reset();
+            }
             current = *file;
             descriptors = std::make_unique<storage::SessionSpoolWriter>();
             const auto created = descriptors->create(
@@ -527,7 +577,12 @@ domain::Result<void> add_base_evidence(
                     return appended;
                 }
             }
-        } else if ((*record)->type == crypto::RecordType::file_end && descriptors) {
+        } else if ((*record)->type == crypto::RecordType::ownership && descriptors) {
+            const auto appended = descriptors->append(crypto::RecordType::ownership, (*record)->plaintext);
+            if (!appended) {
+                return appended;
+            }
+        } else if ((*record)->type == crypto::RecordType::final_summary && descriptors) {
             const auto finalized = descriptors->finalize({});
             if (!finalized) {
                 return std::unexpected(finalized.error());
@@ -734,6 +789,7 @@ domain::Result<bool> reuse_parent_file(
         return std::unexpected(opened.error());
     }
     std::uint64_t chunk_count = 0;
+    std::optional<repository::OwnershipInfo> ownership;
     while (true) {
         auto record = parent_descriptors.next();
         if (!record) {
@@ -741,6 +797,14 @@ domain::Result<bool> reuse_parent_file(
         }
         if (!record->has_value()) {
             break;
+        }
+        if ((*record)->type == crypto::RecordType::ownership) {
+            const auto parsed = repository::parse_ownership(**record);
+            if (!parsed) {
+                return std::unexpected(parsed.error());
+            }
+            ownership = *parsed;
+            continue;
         }
         if ((*record)->type != crypto::RecordType::chunk_batch) {
             continue;
@@ -783,10 +847,19 @@ domain::Result<bool> reuse_parent_file(
     if (!appended) {
         return std::unexpected(appended.error());
     }
+    if (ownership) {
+        const auto appended_ownership = runtime.writer.append_ownership(*ownership);
+        if (!appended_ownership) {
+            return std::unexpected(appended_ownership.error());
+        }
+    }
     const auto completed = runtime.journal.append(JournalRecordType::file_complete, {
         {"file", file_json(info)},
         {"source", source_json(*before)},
         {"spool", hex(spool_uuid)},
+        {"ownership", ownership
+            ? json{{"uid", ownership->uid}, {"gid", ownership->gid}, {"mode", ownership->mode}}
+            : json(nullptr)},
         {"new_chunks", 0},
         {"deduplicated_chunks", chunk_count},
     }, true);
@@ -1025,6 +1098,9 @@ domain::Result<void> capture_file(
         {"file", file_json(active->info)},
         {"source", source_json(before)},
         {"spool", hex(active->spool_uuid)},
+        {"ownership", before.has_ownership
+            ? json{{"uid", before.uid}, {"gid", before.gid}, {"mode", before.mode}}
+            : json(nullptr)},
         {"new_chunks", active->new_chunks},
         {"deduplicated_chunks", active->deduplicated_chunks},
     }, true);
@@ -1068,6 +1144,18 @@ domain::Result<void> capture_file(
     appended = runtime.writer.append_file_end(FileEnd{sequence, active->info.chunk_count, *file_id});
     if (!appended) {
         return appended;
+    }
+    if (before.has_ownership) {
+        const auto ownership = runtime.writer.append_ownership(repository::OwnershipInfo{
+            root.index,
+            relative,
+            before.uid,
+            before.gid,
+            before.mode,
+        });
+        if (!ownership) {
+            return ownership;
+        }
     }
     ++runtime.stats.files;
     runtime.stats.logical_bytes += before.size;
@@ -1194,6 +1282,36 @@ domain::Result<BackupReport> execute(Runtime runtime, bool resumed) {
                 return added;
             }
             ++runtime.stats.directories;
+        } else if (record.type == JournalRecordType::symlink) {
+            const auto text = record.payload.dump();
+            const auto view = std::as_bytes(std::span(text));
+            const auto link = repository::parse_symlink(storage::SpoolRecord{crypto::RecordType::symlink, domain::Bytes(view.begin(), view.end())});
+            if (!link) {
+                return std::unexpected(link.error());
+            }
+            const auto root = root_for_payload(link->root);
+            if (!root) {
+                return std::unexpected(root.error());
+            }
+            const auto appended = runtime.writer.append_symlink(*link);
+            if (!appended) {
+                return appended;
+            }
+            repository::SnapshotPathMetadata metadata;
+            metadata.type = repository::SnapshotEntryType::symlink;
+            metadata.mtime_seconds = link->mtime_seconds;
+            metadata.mtime_nanoseconds = link->mtime_nanoseconds;
+            metadata.mode = link->mode;
+            const auto target_id = symlink_target_id(runtime.id_key, link->target);
+            if (!target_id) {
+                return std::unexpected(target_id.error());
+            }
+            metadata.file_id = *target_id;
+            const auto added = runtime.processed.add((*root)->uuid, link->path, metadata);
+            if (!added) {
+                return added;
+            }
+            ++runtime.stats.symlinks;
         } else if (record.type == JournalRecordType::policy_skip || record.type == JournalRecordType::failure) {
             const auto index = record.payload.at("root").get<std::uint32_t>();
             if (record.sequence < restarts.at(index)) {
@@ -1275,6 +1393,19 @@ domain::Result<BackupReport> execute(Runtime runtime, bool resumed) {
             appended = runtime.writer.append_file_end(FileEnd{file->sequence, file->chunk_count, file->file_id});
             if (!appended) {
                 return appended;
+            }
+            if (record.payload.contains("ownership") && !record.payload.at("ownership").is_null()) {
+                const auto& ownership = record.payload.at("ownership");
+                const auto appended_ownership = runtime.writer.append_ownership(repository::OwnershipInfo{
+                    file->root,
+                    file->path,
+                    ownership.at("uid").get<std::uint64_t>(),
+                    ownership.at("gid").get<std::uint64_t>(),
+                    file->mode,
+                });
+                if (!appended_ownership) {
+                    return appended_ownership;
+                }
             }
             repository::SnapshotPathMetadata metadata;
             metadata.type = repository::SnapshotEntryType::file;
@@ -1478,6 +1609,44 @@ domain::Result<BackupReport> execute(Runtime runtime, bool resumed) {
                         return std::unexpected(journaled.error());
                     }
                     ++runtime.stats.directories;
+                }
+                const auto advanced = advance();
+                if (!advanced) {
+                    return std::unexpected(advanced.error());
+                }
+                continue;
+            }
+            if (std::filesystem::is_symlink(status) && runtime.spec.selection.symlinks) {
+                const auto previous = runtime.processed.find(root.uuid, relative);
+                if (!previous) {
+                    return std::unexpected(previous.error());
+                }
+                if (!*previous) {
+                    const auto link = symlink_info(root.index, relative, entry.path());
+                    if (!valid_utf8(link.target)) {
+                        const auto skipped = runtime.writer.append_policy_skip(PolicySkip{root.index, relative, "non-UTF-8 symlink target"});
+                        if (!skipped) {
+                            return std::unexpected(skipped.error());
+                        }
+                        ++runtime.skipped;
+                    } else {
+                        auto appended = runtime.writer.append_symlink(link);
+                        if (!appended) {
+                            return std::unexpected(appended.error());
+                        }
+                        const auto journaled = runtime.journal.append(JournalRecordType::symlink, {
+                            {"schema", "cpcp.symlink.v1"},
+                            {"root", link.root},
+                            {"path", link.path},
+                            {"target", link.target},
+                            {"mtime", {{"seconds", std::to_string(link.mtime_seconds)}, {"nanoseconds", link.mtime_nanoseconds}}},
+                            {"mode", link.mode},
+                        }, true);
+                        if (!journaled) {
+                            return std::unexpected(journaled.error());
+                        }
+                        ++runtime.stats.symlinks;
+                    }
                 }
                 const auto advanced = advance();
                 if (!advanced) {
@@ -1831,6 +2000,7 @@ domain::Result<BackupReport> backup_add(
         options.unsupported_fail ? "fail" : "skip",
         !options.cross_file_systems,
         options.exclude_patterns,
+        true,
     };
     spec.allow_partial = options.allow_partial;
     spec.has_parent = parent.has_value();

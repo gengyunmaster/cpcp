@@ -14,6 +14,10 @@
 #include <string>
 #include <vector>
 
+#ifndef _WIN32
+#include <sys/stat.h>
+#endif
+
 namespace {
 
 using cpcp::application::BackupOptions;
@@ -78,7 +82,8 @@ TEST_CASE("backup creates and reuses snapshots with deduplication") {
     REQUIRE(first.snapshot.stats.new_chunks == 2);
     REQUIRE(first.snapshot.stats.deduplicated_chunks == 1);
 #ifndef _WIN32
-    REQUIRE(first.skipped_entries == 1);
+    REQUIRE(first.skipped_entries == 0);
+    REQUIRE(first.snapshot.stats.symlinks == 1);
 #endif
 
     const auto second = cpcp::application::backup_add(repository, password(), {source}, {}).value();
@@ -136,7 +141,7 @@ TEST_CASE("partial snapshots authenticate failures and require explicit restore 
     const auto source = fixture.path() / "source";
     std::filesystem::create_directories(source);
     write_file(source / "a.txt", "hello");
-    std::filesystem::create_symlink(source / "a.txt", source / "link.txt");
+    REQUIRE(mkfifo((source / "fifo").c_str(), 0600) == 0);
     cpcp::repository::ConfigOptions config;
     config.kdf = {8192, 1};
     config.chunk_size = 1024 * 1024;

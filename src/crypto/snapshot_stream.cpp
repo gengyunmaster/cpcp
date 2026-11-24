@@ -33,6 +33,8 @@ bool valid_record_type(RecordType type) {
     case RecordType::policy_skip:
     case RecordType::failure:
     case RecordType::directory:
+    case RecordType::symlink:
+    case RecordType::ownership:
     case RecordType::final_summary:
         return true;
     }

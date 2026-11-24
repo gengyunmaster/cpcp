@@ -15,6 +15,11 @@ using domain::ErrorCode;
 
 namespace {
 
+domain::Result<repository::SnapshotPathMetadata> symlink_metadata(
+    const repository::SymlinkInfo& link,
+    const crypto::SecureKey& id_key
+);
+
 domain::Result<repository::SnapshotPathIndex> build_index(
     const std::filesystem::path& repository,
     const repository::RepositoryConfig& config,
@@ -81,6 +86,23 @@ domain::Result<repository::SnapshotPathIndex> build_index(
             metadata.mtime_nanoseconds = directory->mtime_nanoseconds;
             metadata.mode = directory->mode;
             path = directory->path;
+        } else if ((*record)->type == crypto::RecordType::symlink) {
+            const auto link = repository::parse_symlink(**record);
+            if (!link) {
+                return std::unexpected(link.error());
+            }
+            const auto found = std::ranges::find_if(summary.roots, [&](const repository::RootInfo& candidate) {
+                return candidate.index == link->root;
+            });
+            if (found != summary.roots.end()) {
+                root = *found;
+            }
+            const auto parsed = symlink_metadata(*link, id_key);
+            if (!parsed) {
+                return std::unexpected(parsed.error());
+            }
+            metadata = *parsed;
+            path = link->path;
         } else {
             continue;
         }
@@ -97,6 +119,29 @@ domain::Result<repository::SnapshotPathIndex> build_index(
         return std::unexpected(finished.error());
     }
     return index;
+}
+
+domain::Result<repository::SnapshotPathMetadata> symlink_metadata(
+    const repository::SymlinkInfo& link,
+    const crypto::SecureKey& id_key
+) {
+    domain::Bytes input;
+    for (const char value : "cpcp.symlink.v1") {
+        input.push_back(static_cast<std::byte>(static_cast<unsigned char>(value)));
+    }
+    const auto bytes = std::as_bytes(std::span(link.target));
+    input.insert(input.end(), bytes.begin(), bytes.end());
+    const auto id = crypto::compute_hmac_sha256(id_key, input);
+    if (!id) {
+        return std::unexpected(id.error());
+    }
+    repository::SnapshotPathMetadata metadata;
+    metadata.type = repository::SnapshotEntryType::symlink;
+    metadata.mtime_seconds = link.mtime_seconds;
+    metadata.mtime_nanoseconds = link.mtime_nanoseconds;
+    metadata.mode = link.mode;
+    metadata.file_id = *id;
+    return metadata;
 }
 
 bool difference(std::string_view status) {
@@ -237,6 +282,33 @@ domain::Result<DiffReport> diff_snapshots(
                 metadata.mtime_nanoseconds = directory->mtime_nanoseconds;
                 metadata.mode = directory->mode;
                 path = directory->path;
+            } else if ((*record)->type == crypto::RecordType::symlink) {
+                const auto link = repository::parse_symlink(**record);
+                if (!link) {
+                    return std::unexpected(link.error());
+                }
+                root = std::ranges::find_if(from.roots, [&](const repository::RootInfo& candidate) {
+                    return candidate.index == link->root;
+                }) != from.roots.end()
+                    ? &*std::ranges::find_if(from.roots, [&](const repository::RootInfo& candidate) {
+                        return candidate.index == link->root;
+                    })
+                    : nullptr;
+                if (root != nullptr) {
+                    other_root = std::ranges::find_if(to.roots, [&](const repository::RootInfo& candidate) {
+                        return candidate.uuid == root->uuid;
+                    }) != to.roots.end()
+                        ? &*std::ranges::find_if(to.roots, [&](const repository::RootInfo& candidate) {
+                            return candidate.uuid == root->uuid;
+                        })
+                        : nullptr;
+                }
+                const auto parsed = symlink_metadata(*link, *id_key);
+                if (!parsed) {
+                    return std::unexpected(parsed.error());
+                }
+                metadata = *parsed;
+                path = link->path;
             } else {
                 continue;
             }

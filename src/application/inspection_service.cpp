@@ -76,6 +76,7 @@ bool same_stats(
 ) {
     return left.files == right.files
         && left.directories == right.directories
+        && left.symlinks == right.symlinks
         && left.logical_bytes == right.logical_bytes
         && left.chunk_references == right.chunk_references
         && left.new_chunks == right.new_chunks
@@ -221,6 +222,20 @@ domain::Result<std::uint64_t> verify_snapshot(
             ++failures;
             break;
         }
+        case crypto::RecordType::symlink: {
+            const auto link = repository::parse_symlink(**record);
+            if (!link || !safe_relative(link->path, false) || link->target.empty()) {
+                return std::unexpected(Error{ErrorCode::integrity, "invalid symlink record"});
+            }
+            break;
+        }
+        case crypto::RecordType::ownership: {
+            const auto ownership = repository::parse_ownership(**record);
+            if (!ownership || !safe_relative(ownership->path, false)) {
+                return std::unexpected(Error{ErrorCode::integrity, "invalid ownership record"});
+            }
+            break;
+        }
         case crypto::RecordType::final_summary: {
             auto stats = repository::parse_final_stats(**record);
             auto status = repository::parse_final_status(**record);
@@ -235,7 +250,8 @@ domain::Result<std::uint64_t> verify_snapshot(
             if (!header
                 || header->selection_policy.unsupported != summary.selection_policy.unsupported
                 || header->selection_policy.one_file_system != summary.selection_policy.one_file_system
-                || header->selection_policy.exclusions != summary.selection_policy.exclusions) {
+                || header->selection_policy.exclusions != summary.selection_policy.exclusions
+                || header->selection_policy.symlinks != summary.selection_policy.symlinks) {
                 return std::unexpected(Error{ErrorCode::integrity, "snapshot selection policy mismatch"});
             }
             break;
@@ -289,10 +305,17 @@ domain::Result<void> apply_metadata(
     std::uint32_t nanoseconds,
     std::uint32_t mode,
     bool strict,
+    bool restore_privileged,
     std::uint64_t& warnings
 ) {
     std::error_code error;
-    const auto safe_mode = mode & ~06000U;
+    const auto safe_mode = restore_privileged ? mode : mode & ~06000U;
+    if (!restore_privileged && (mode & 06000U) != 0) {
+        ++warnings;
+        if (strict) {
+            return std::unexpected(Error{ErrorCode::source_changed, "privileged permission bits were stripped"});
+        }
+    }
     std::filesystem::permissions(
         path,
         static_cast<std::filesystem::perms>(safe_mode),
@@ -553,6 +576,7 @@ domain::Result<RestoreReport> restore_snapshot(
                 directories.back().first.mtime_nanoseconds,
                 directories.back().first.mode,
                 options.strict_metadata,
+                options.restore_privileged_bits,
                 report.metadata_warnings
             );
             if (!result) {
@@ -704,6 +728,7 @@ domain::Result<RestoreReport> restore_snapshot(
                     current->mtime_nanoseconds,
                     current->mode,
                     options.strict_metadata,
+                    options.restore_privileged_bits,
                     report.metadata_warnings
                 );
                 if (!result) {
@@ -729,6 +754,101 @@ domain::Result<RestoreReport> restore_snapshot(
             temporary.clear();
             break;
         }
+        case crypto::RecordType::symlink: {
+            const auto link = repository::parse_symlink(**record);
+            if (!link) {
+                return std::unexpected(link.error());
+            }
+            if (!selected_root(link->root) || (options.path && *options.path != link->path)) {
+                break;
+            }
+            const auto final = output_path(
+                options.destination,
+                *summary,
+                link->root,
+                link->path,
+                options.strip_root
+            );
+            std::filesystem::create_directories(final.parent_path(), filesystem_error);
+            if (filesystem_error) {
+                return std::unexpected(Error{ErrorCode::permanent_io, filesystem_error.message()});
+            }
+            const auto temporary = options.destination / "tmp"
+                / (domain::hex_encode(crypto::random_uuid()) + ".link");
+            std::filesystem::create_directories(temporary.parent_path(), filesystem_error);
+            if (filesystem_error) {
+                return std::unexpected(Error{ErrorCode::permanent_io, filesystem_error.message()});
+            }
+            std::filesystem::create_symlink(link->target, temporary, filesystem_error);
+            if (filesystem_error) {
+                return std::unexpected(Error{ErrorCode::permanent_io, filesystem_error.message()});
+            }
+            RemoveFile cleanup{temporary};
+#ifndef _WIN32
+            const auto timestamp = platform::set_modification_time(temporary, link->mtime_seconds, link->mtime_nanoseconds);
+            if (!timestamp) {
+                ++report.metadata_warnings;
+                if (options.strict_metadata) {
+                    return std::unexpected(timestamp.error());
+                }
+            }
+#else
+            ++report.metadata_warnings;
+            if (options.strict_metadata) {
+                return std::unexpected(Error{ErrorCode::unsupported, "Windows symlink timestamps are not supported"});
+            }
+#endif
+            const auto published = options.overwrite
+                ? platform::replace_file(temporary, final)
+                : platform::publish_no_replace(temporary, final);
+            if (!published) {
+                return std::unexpected(published.error());
+            }
+            const auto synced = platform::sync_directory(final.parent_path());
+            if (!synced) {
+                return std::unexpected(synced.error());
+            }
+            ++report.symlinks;
+            break;
+        }
+        case crypto::RecordType::ownership: {
+            const auto ownership = repository::parse_ownership(**record);
+            if (!ownership) {
+                return std::unexpected(ownership.error());
+            }
+            if (!options.restore_ownership || !selected_root(ownership->root)
+                || (options.path && *options.path != ownership->path)) {
+                break;
+            }
+            const auto path = output_path(
+                options.destination,
+                *summary,
+                ownership->root,
+                ownership->path,
+                options.strip_root
+            );
+            const auto changed = platform::set_ownership(path, ownership->uid, ownership->gid);
+            if (!changed) {
+                ++report.metadata_warnings;
+                if (options.strict_metadata) {
+                    return std::unexpected(changed.error());
+                }
+            } else if (options.restore_privileged_bits) {
+                std::filesystem::permissions(
+                    path,
+                    static_cast<std::filesystem::perms>(ownership->mode),
+                    std::filesystem::perm_options::replace,
+                    filesystem_error
+                );
+                if (filesystem_error) {
+                    ++report.metadata_warnings;
+                    if (options.strict_metadata) {
+                        return std::unexpected(Error{ErrorCode::permanent_io, filesystem_error.message()});
+                    }
+                }
+            }
+            break;
+        }
         case crypto::RecordType::root:
         case crypto::RecordType::context:
         case crypto::RecordType::snapshot_header:
@@ -746,7 +866,7 @@ domain::Result<RestoreReport> restore_snapshot(
     if (current || identity || output) {
         return std::unexpected(Error{ErrorCode::integrity, "restore ended with an incomplete file"});
     }
-    if (options.path && report.files == 0) {
+    if (options.path && report.files == 0 && report.symlinks == 0) {
         return std::unexpected(Error{ErrorCode::permanent_io, "requested restore path was not found"});
     }
     return report;
@@ -955,6 +1075,7 @@ domain::Result<BrowseReport> browse_snapshot(
                 directory->mtime_seconds,
                 directory->mtime_nanoseconds,
                 directory->mode,
+                "",
             });
             if (!emitted) {
                 return std::unexpected(emitted.error());
@@ -979,6 +1100,32 @@ domain::Result<BrowseReport> browse_snapshot(
                 file->mtime_seconds,
                 file->mtime_nanoseconds,
                 file->mode,
+                "",
+            });
+            if (!emitted) {
+                return std::unexpected(emitted.error());
+            }
+        } else if ((*record)->type == crypto::RecordType::symlink) {
+            const auto link = repository::parse_symlink(**record);
+            if (!link) {
+                return std::unexpected(link.error());
+            }
+            const auto root = std::ranges::find_if(selected->roots, [&](const repository::RootInfo& candidate) {
+                return candidate.index == link->root;
+            });
+            if (root == selected->roots.end()) {
+                return std::unexpected(Error{ErrorCode::integrity, "symlink references an unknown root"});
+            }
+            const auto emitted = emit(SnapshotEntry{
+                "symlink",
+                link->root,
+                root->label,
+                link->path,
+                0,
+                link->mtime_seconds,
+                link->mtime_nanoseconds,
+                link->mode,
+                link->target,
             });
             if (!emitted) {
                 return std::unexpected(emitted.error());

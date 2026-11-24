@@ -446,6 +446,7 @@ domain::Result<std::optional<SnapshotPathMetadata>> SnapshotPathIndex::find(
     const auto metadata = decode_metadata(*record);
     if (metadata.type != SnapshotEntryType::directory
         && metadata.type != SnapshotEntryType::file
+        && metadata.type != SnapshotEntryType::symlink
         && metadata.type != SnapshotEntryType::presence) {
         return std::unexpected(Error{ErrorCode::integrity, "invalid path-index entry type"});
     }

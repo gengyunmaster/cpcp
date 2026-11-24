@@ -7,7 +7,10 @@ file(MAKE_DIRECTORY "${root}" "${source}")
 file(WRITE "${password}" "test password\n")
 file(CHMOD "${password}" PERMISSIONS OWNER_READ OWNER_WRITE)
 file(WRITE "${source}/a.txt" "hello")
-file(CREATE_LINK "${source}/a.txt" "${source}/link.txt" SYMBOLIC)
+execute_process(COMMAND mkfifo "${source}/fifo" RESULT_VARIABLE fifo_result)
+if(NOT fifo_result EQUAL 0)
+    message(FATAL_ERROR "Could not create the unsupported FIFO fixture")
+endif()
 
 execute_process(
     COMMAND "${CPCP_EXECUTABLE}" repo init "${repo}"

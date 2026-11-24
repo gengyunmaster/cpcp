@@ -217,6 +217,41 @@ SnapshotPathMetadata file_metadata(
     return result;
 }
 
+domain::Result<SnapshotPathMetadata> symlink_metadata(
+    const std::filesystem::path& path,
+    const crypto::SecureKey& id_key
+) {
+    const auto target = std::filesystem::read_symlink(path).generic_string();
+    domain::Bytes input;
+    for (const char value : "cpcp.symlink.v1") {
+        input.push_back(static_cast<std::byte>(static_cast<unsigned char>(value)));
+    }
+    const auto bytes = std::as_bytes(std::span(target));
+    input.insert(input.end(), bytes.begin(), bytes.end());
+    const auto target_id = crypto::compute_hmac_sha256(id_key, input);
+    if (!target_id) {
+        return std::unexpected(target_id.error());
+    }
+    SnapshotPathMetadata metadata;
+    metadata.type = SnapshotEntryType::symlink;
+    metadata.file_id = *target_id;
+#ifndef _WIN32
+    struct stat status {};
+    if (lstat(path.c_str(), &status) != 0) {
+        return std::unexpected(Error{ErrorCode::permanent_io, std::generic_category().message(errno)});
+    }
+#ifdef __APPLE__
+    metadata.mtime_seconds = status.st_mtimespec.tv_sec;
+    metadata.mtime_nanoseconds = static_cast<std::uint32_t>(status.st_mtimespec.tv_nsec);
+#else
+    metadata.mtime_seconds = status.st_mtim.tv_sec;
+    metadata.mtime_nanoseconds = static_cast<std::uint32_t>(status.st_mtim.tv_nsec);
+#endif
+    metadata.mode = static_cast<std::uint32_t>(status.st_mode & 07777);
+#endif
+    return metadata;
+}
+
 bool metadata_matches(
     const SnapshotPathMetadata& source,
     const SnapshotPathMetadata& snapshot
@@ -419,6 +454,34 @@ domain::Result<CheckReport> check_backup(
                     return std::unexpected(added.error());
                 }
             }
+        } else if ((*record)->type == crypto::RecordType::symlink) {
+            const auto link = repository::parse_symlink(**record);
+            if (!link) {
+                return std::unexpected(link.error());
+            }
+            if (link->root == root.index && selected_path(link->path, options.path)) {
+                SnapshotPathMetadata metadata;
+                metadata.type = SnapshotEntryType::symlink;
+                metadata.mtime_seconds = link->mtime_seconds;
+                metadata.mtime_nanoseconds = link->mtime_nanoseconds;
+                metadata.mode = link->mode;
+                const auto target = link->target;
+                domain::Bytes input;
+                for (const char value : "cpcp.symlink.v1") {
+                    input.push_back(static_cast<std::byte>(static_cast<unsigned char>(value)));
+                }
+                const auto bytes = std::as_bytes(std::span(target));
+                input.insert(input.end(), bytes.begin(), bytes.end());
+                const auto target_hash = crypto::compute_hmac_sha256(*id_key, input);
+                if (!target_hash) {
+                    return std::unexpected(target_hash.error());
+                }
+                metadata.file_id = *target_hash;
+                const auto added = snapshot_index->add(root.uuid, link->path, metadata);
+                if (!added) {
+                    return std::unexpected(added.error());
+                }
+            }
         }
     }
     const auto indexed = snapshot_index->finish();
@@ -545,6 +608,43 @@ domain::Result<CheckReport> check_backup(
             continue;
         }
 
+        if (std::filesystem::is_symlink(status) && selected->selection_policy.symlinks) {
+            if (in_scope) {
+                const auto metadata = symlink_metadata(entry.path(), *id_key);
+                if (!metadata) {
+                    return std::unexpected(metadata.error());
+                }
+                const auto previous = snapshot_index->find(root.uuid, relative);
+                if (!previous) {
+                    return std::unexpected(previous.error());
+                }
+                const auto present = source_index->add(root.uuid, relative, SnapshotPathMetadata{});
+                if (!present) {
+                    return std::unexpected(present.error());
+                }
+                std::string event_status = "added";
+                if (*previous) {
+                    if ((*previous)->type != SnapshotEntryType::symlink) {
+                        event_status = "type-changed";
+                    } else if ((*previous)->file_id != metadata->file_id) {
+                        event_status = "changed";
+                    } else if (!metadata_matches(*metadata, **previous)) {
+                        event_status = "changed";
+                    } else {
+                        event_status = options.verify_repo ? "verified" : options.content ? "content-match" : "metadata-match";
+                    }
+                }
+                const auto emitted = emit(CheckEvent{root.index, relative, event_status, "", 0});
+                if (!emitted) {
+                    return std::unexpected(emitted.error());
+                }
+            }
+            const auto advanced = advance();
+            if (!advanced) {
+                return std::unexpected(advanced.error());
+            }
+            continue;
+        }
         if (!std::filesystem::is_regular_file(status)) {
             if (in_scope) {
                 const auto emitted = emit(CheckEvent{
@@ -759,6 +859,20 @@ domain::Result<CheckReport> check_backup(
                 }
                 if (!*present) {
                     event = CheckEvent{root.index, directory->path, "missing", "", 0};
+                }
+            }
+        } else if ((*record)->type == crypto::RecordType::symlink) {
+            const auto link = repository::parse_symlink(**record);
+            if (!link) {
+                return std::unexpected(link.error());
+            }
+            if (link->root == root.index && selected_path(link->path, options.path)) {
+                const auto present = source_index->find(root.uuid, link->path);
+                if (!present) {
+                    return std::unexpected(present.error());
+                }
+                if (!*present) {
+                    event = CheckEvent{root.index, link->path, "missing", "", 0};
                 }
             }
         } else if ((*record)->type == crypto::RecordType::failure) {

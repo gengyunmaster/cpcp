@@ -16,6 +16,9 @@ struct FileMetadata {
     std::uint64_t device = 0;
     std::uint64_t inode = 0;
     std::uint32_t mode = 0;
+    std::uint64_t uid = 0;
+    std::uint64_t gid = 0;
+    bool has_ownership = false;
 };
 
 class BinaryFile {
@@ -50,6 +53,11 @@ domain::Result<void> set_modification_time(
     const std::filesystem::path& path,
     std::int64_t seconds,
     std::uint32_t nanoseconds
+);
+domain::Result<void> set_ownership(
+    const std::filesystem::path& path,
+    std::uint64_t uid,
+    std::uint64_t gid
 );
 domain::Result<void> sync_directory(const std::filesystem::path& path);
 domain::Result<void> publish_no_replace(

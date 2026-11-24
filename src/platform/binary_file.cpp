@@ -369,6 +369,9 @@ domain::Result<FileMetadata> BinaryFile::metadata() const {
     metadata.device = static_cast<std::uint64_t>(status.st_dev);
     metadata.inode = status.st_ino;
     metadata.mode = static_cast<std::uint32_t>(status.st_mode & 07777);
+    metadata.uid = static_cast<std::uint64_t>(status.st_uid);
+    metadata.gid = static_cast<std::uint64_t>(status.st_gid);
+    metadata.has_ownership = true;
     return metadata;
 #endif
 }
@@ -424,6 +427,27 @@ domain::Result<void> set_modification_time(
     }
 #endif
     return {};
+}
+
+domain::Result<void> set_ownership(
+    const std::filesystem::path& path,
+    std::uint64_t uid,
+    std::uint64_t gid
+) {
+#ifdef _WIN32
+    static_cast<void>(path);
+    static_cast<void>(uid);
+    static_cast<void>(gid);
+    return std::unexpected(Error{ErrorCode::unsupported, "POSIX ownership restoration is unavailable on Windows"});
+#else
+    if (uid > std::numeric_limits<uid_t>::max() || gid > std::numeric_limits<gid_t>::max()) {
+        return std::unexpected(Error{ErrorCode::usage, "ownership value is out of range"});
+    }
+    if (lchown(path.c_str(), static_cast<uid_t>(uid), static_cast<gid_t>(gid)) != 0) {
+        return std::unexpected(Error{ErrorCode::permanent_io, native_error(errno)});
+    }
+    return {};
+#endif
 }
 
 domain::Result<void> sync_directory(const std::filesystem::path& path) {

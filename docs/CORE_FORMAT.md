@@ -135,6 +135,8 @@ Record types are:
 | 7 | Policy skip |
 | 8 | Failure |
 | 9 | Directory |
+| 10 | Symbolic link |
+| 11 | Ownership metadata |
 | 255 | Final summary |
 
 The final summary uses `TAG_FINAL`; all other records use `TAG_MESSAGE`. Missing FINAL, data after FINAL, unexpected record tags, frame reordering, wrong context, and oversized frames are errors.

@@ -34,6 +34,8 @@ enum class RecordType : std::uint8_t {
     policy_skip = 7,
     failure = 8,
     directory = 9,
+    symlink = 10,
+    ownership = 11,
     final_summary = 255,
 };
 

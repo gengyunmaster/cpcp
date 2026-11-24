@@ -28,6 +28,23 @@ struct DirectoryInfo {
     std::uint32_t mode;
 };
 
+struct SymlinkInfo {
+    std::uint32_t root;
+    std::string path;
+    std::string target;
+    std::int64_t mtime_seconds = 0;
+    std::uint32_t mtime_nanoseconds = 0;
+    std::uint32_t mode = 0;
+};
+
+struct OwnershipInfo {
+    std::uint32_t root;
+    std::string path;
+    std::uint64_t uid = 0;
+    std::uint64_t gid = 0;
+    std::uint32_t mode = 0;
+};
+
 struct FileInfo {
     std::uint64_t sequence;
     std::uint32_t root;
@@ -68,6 +85,7 @@ struct SelectionPolicy {
     std::string unsupported = "skip";
     bool one_file_system = true;
     std::vector<std::string> exclusions;
+    bool symlinks = false;
 };
 
 struct SelectionStats {
@@ -78,6 +96,7 @@ struct SelectionStats {
 struct SnapshotStats {
     std::uint64_t files = 0;
     std::uint64_t directories = 0;
+    std::uint64_t symlinks = 0;
     std::uint64_t logical_bytes = 0;
     std::uint64_t chunk_references = 0;
     std::uint64_t new_chunks = 0;
@@ -145,6 +164,8 @@ public:
 
     domain::Result<void> append_root(const RootInfo& root);
     domain::Result<void> append_directory(const DirectoryInfo& directory);
+    domain::Result<void> append_symlink(const SymlinkInfo& symlink);
+    domain::Result<void> append_ownership(const OwnershipInfo& ownership);
     domain::Result<void> append_file_header(const FileInfo& file);
     domain::Result<void> append_chunk_batch(const ChunkBatch& batch);
     domain::Result<void> append_file_end(const FileEnd& end);
@@ -235,6 +256,8 @@ domain::Result<SnapshotHeaderInfo> parse_snapshot_header(
 );
 domain::Result<RootInfo> parse_root(const storage::SpoolRecord& record);
 domain::Result<DirectoryInfo> parse_directory(const storage::SpoolRecord& record);
+domain::Result<SymlinkInfo> parse_symlink(const storage::SpoolRecord& record);
+domain::Result<OwnershipInfo> parse_ownership(const storage::SpoolRecord& record);
 domain::Result<FileInfo> parse_file_header(const storage::SpoolRecord& record);
 domain::Result<ChunkBatch> parse_chunk_batch(const storage::SpoolRecord& record);
 domain::Result<FileEnd> parse_file_end(const storage::SpoolRecord& record);

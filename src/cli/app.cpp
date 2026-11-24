@@ -286,6 +286,8 @@ int run(int argc, char** argv) {
     restore->add_flag("--yes", restore_options.yes);
     restore->add_flag("--strict-metadata", restore_options.strict_metadata);
     restore->add_flag("--allow-partial", restore_options.allow_partial, "Allow restoration from a partial snapshot");
+    restore->add_flag("--restore-ownership", restore_options.restore_ownership, "Restore recorded POSIX ownership when permitted");
+    restore->add_flag("--restore-privileged-bits", restore_options.restore_privileged_bits, "Restore setuid/setgid bits explicitly");
     add_inspection_options(restore);
     restore->callback([&] {
         if (!root_selector.empty()) {

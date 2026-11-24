@@ -26,6 +26,7 @@ enum class JournalRecordType : std::uint8_t {
     remap_root = 9,
     main_published = 10,
     committed = 11,
+    symlink = 12,
 };
 
 struct JournalRecord {

@@ -72,6 +72,7 @@ Record type assignments are:
 | 9 | Explicit root remapping |
 | 10 | Main snapshot publication |
 | 11 | Committed summary |
+| 12 | Symbolic link |
 
 ## 3. Checkpoints and recovery
 

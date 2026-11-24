@@ -190,7 +190,9 @@ if(BUILD_TESTING)
         tests/integration/incremental_backup_test.cpp
         tests/integration/key_service_test.cpp
         tests/integration/lifecycle_service_test.cpp
+        tests/integration/metadata_test.cpp
         tests/integration/resume_service_test.cpp
+        tests/integration/symlink_test.cpp
         tests/integration/validation_cache_test.cpp
     )
     target_link_libraries(cpcp_backup_tests PRIVATE

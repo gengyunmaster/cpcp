@@ -73,6 +73,9 @@ SnapshotStats parse_stats(const json& object) {
     SnapshotStats stats;
     stats.files = require_uint_string(object, "files");
     stats.directories = require_uint_string(object, "directories");
+    if (object.contains("symlinks")) {
+        stats.symlinks = require_uint_string(object, "symlinks");
+    }
     stats.logical_bytes = require_uint_string(object, "logical_bytes");
     stats.chunk_references = require_uint_string(object, "chunk_references");
     stats.new_chunks = require_uint_string(object, "new_chunks");
@@ -128,6 +131,9 @@ domain::Result<SnapshotHeaderInfo> parse_snapshot_header(
             if (selection.contains("exclusions")) {
                 header.selection_policy.exclusions = selection.at("exclusions").get<std::vector<std::string>>();
             }
+            if (selection.contains("symlinks")) {
+                header.selection_policy.symlinks = selection.at("symlinks").get<bool>();
+            }
             if (header.selection_policy.unsupported != "skip"
                 && header.selection_policy.unsupported != "fail") {
                 throw std::invalid_argument("invalid unsupported-entry policy");
@@ -168,6 +174,38 @@ domain::Result<DirectoryInfo> parse_directory(const storage::SpoolRecord& record
             require_int_string(mtime, "seconds"),
             static_cast<std::uint32_t>(require_uint(mtime, "nanoseconds")),
             static_cast<std::uint32_t>(require_uint(document, "mode")),
+        };
+    } catch (const std::exception& error) {
+        return std::unexpected(Error{ErrorCode::integrity, error.what()});
+    }
+}
+
+domain::Result<SymlinkInfo> parse_symlink(const storage::SpoolRecord& record) {
+    try {
+        const auto document = parse_document(record, "cpcp.symlink.v1");
+        const auto& mtime = document.at("mtime");
+        return SymlinkInfo{
+            static_cast<std::uint32_t>(require_uint(document, "root")),
+            require_string(document, "path"),
+            require_string(document, "target"),
+            require_int_string(mtime, "seconds"),
+            static_cast<std::uint32_t>(require_uint(mtime, "nanoseconds")),
+            static_cast<std::uint32_t>(require_uint(document, "mode")),
+        };
+    } catch (const std::exception& error) {
+        return std::unexpected(Error{ErrorCode::integrity, error.what()});
+    }
+}
+
+domain::Result<OwnershipInfo> parse_ownership(const storage::SpoolRecord& record) {
+    try {
+        const auto document = parse_document(record, "cpcp.ownership.v1");
+        return OwnershipInfo{
+            static_cast<std::uint32_t>(require_uint(document, "root")),
+            require_string(document, "path"),
+            require_uint_string(document, "uid"),
+            require_uint_string(document, "gid"),
+            document.contains("mode") ? static_cast<std::uint32_t>(require_uint(document, "mode")) : 0,
         };
     } catch (const std::exception& error) {
         return std::unexpected(Error{ErrorCode::integrity, error.what()});

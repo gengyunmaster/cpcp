@@ -82,6 +82,7 @@ json selection_policy_json(const SelectionPolicy& policy) {
         {"unsupported", policy.unsupported},
         {"one_file_system", policy.one_file_system},
         {"exclusions", policy.exclusions},
+        {"symlinks", policy.symlinks},
     };
 }
 
@@ -91,6 +92,9 @@ SelectionPolicy parse_selection_policy(const json& object) {
     policy.one_file_system = object.at("one_file_system").get<bool>();
     if (object.contains("exclusions")) {
         policy.exclusions = object.at("exclusions").get<std::vector<std::string>>();
+    }
+    if (object.contains("symlinks")) {
+        policy.symlinks = object.at("symlinks").get<bool>();
     }
     if ((policy.unsupported != "skip" && policy.unsupported != "fail")) {
         throw std::invalid_argument("invalid unsupported-entry policy");
@@ -109,6 +113,7 @@ json stats_json(const SnapshotStats& stats) {
     auto document = json{
         {"files", uint_string(stats.files)},
         {"directories", uint_string(stats.directories)},
+        {"symlinks", uint_string(stats.symlinks)},
         {"logical_bytes", uint_string(stats.logical_bytes)},
         {"chunk_references", uint_string(stats.chunk_references)},
         {"new_chunks", uint_string(stats.new_chunks)},
@@ -126,6 +131,9 @@ SnapshotStats parse_stats(const json& object) {
     SnapshotStats stats;
     stats.files = require_string_uint(object, "files");
     stats.directories = require_string_uint(object, "directories");
+    if (object.contains("symlinks")) {
+        stats.symlinks = require_string_uint(object, "symlinks");
+    }
     stats.logical_bytes = require_string_uint(object, "logical_bytes");
     stats.chunk_references = require_string_uint(object, "chunk_references");
     stats.new_chunks = require_string_uint(object, "new_chunks");
@@ -591,6 +599,31 @@ domain::Result<void> SnapshotWriter::append_directory(const DirectoryInfo& direc
     });
 }
 
+domain::Result<void> SnapshotWriter::append_symlink(const SymlinkInfo& symlink) {
+    return append(crypto::RecordType::symlink, {
+        {"schema", "cpcp.symlink.v1"},
+        {"root", symlink.root},
+        {"path", symlink.path},
+        {"target", symlink.target},
+        {"mtime", {
+            {"seconds", std::to_string(symlink.mtime_seconds)},
+            {"nanoseconds", symlink.mtime_nanoseconds},
+        }},
+        {"mode", symlink.mode},
+    });
+}
+
+domain::Result<void> SnapshotWriter::append_ownership(const OwnershipInfo& ownership) {
+    return append(crypto::RecordType::ownership, {
+        {"schema", "cpcp.ownership.v1"},
+        {"root", ownership.root},
+        {"path", ownership.path},
+        {"uid", std::to_string(ownership.uid)},
+        {"gid", std::to_string(ownership.gid)},
+        {"mode", ownership.mode},
+    });
+}
+
 domain::Result<void> SnapshotWriter::append_file_header(const FileInfo& file) {
     return append(crypto::RecordType::file_header, {
         {"schema", "cpcp.file.v1"},
@@ -711,7 +744,8 @@ domain::Result<SnapshotSummary> SnapshotWriter::finish(
                 if (!header || header_seen
                     || header->selection_policy.unsupported != summary_.selection_policy.unsupported
                     || header->selection_policy.one_file_system != summary_.selection_policy.one_file_system
-                    || header->selection_policy.exclusions != summary_.selection_policy.exclusions) {
+                    || header->selection_policy.exclusions != summary_.selection_policy.exclusions
+                    || header->selection_policy.symlinks != summary_.selection_policy.symlinks) {
                     return std::unexpected(Error{ErrorCode::integrity, "snapshot header semantics mismatch"});
                 }
                 header_seen = true;

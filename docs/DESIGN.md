@@ -1119,6 +1119,8 @@ Each object publication has one owner responsible for its commit transition. The
 
 `--jobs` and pipeline implementation follow profiling and simulator coverage. ThreadSanitizer tests exercise the actual concurrency model rather than serving as a substitute for protocol reasoning.
 
+The initial bounded pipeline accepts 1–8 workers and parallelizes only pure zstd chunk compression. Each batch holds at most `jobs × chunk_size` source and encoded bytes. Worker tasks have no repository, journal, or mutable-cache access. The owning backup thread consumes results in source order and remains solely responsible for content IDs, object publication, file identity, snapshot frames, journal checkpoints, and statistics. This deliberately does not claim parallel disk writes or lock-free deduplication.
+
 ### 14.8 Code style and reviewability
 
 Names should describe domain concepts such as `SnapshotPublisher`, `ChunkValidator`, and `BackupSession` rather than generic helpers. Functions should have one clear responsibility, and security-critical state transitions should be visible in one place.

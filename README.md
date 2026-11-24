@@ -11,6 +11,7 @@ The current implementation provides authenticated repository configuration, encr
 - Header export/import and configuration repair
 - Fixed-size XChaCha20-Poly1305 chunks with read-back and content-ID validation
 - Versioned zstd chunk envelopes and authenticated compressed snapshot batches
+- Bounded `--jobs` compression workers with single-owner repository and journal state
 - Second-level file identities and streaming continuation records
 - Encrypted snapshot streams, authenticated summaries, and bounded external chunk-set commitments
 - Deduplicated `backup add` with source mutation detection and unsupported-entry policies

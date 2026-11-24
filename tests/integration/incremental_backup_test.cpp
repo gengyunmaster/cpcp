@@ -72,6 +72,35 @@ TEST_CASE("incremental backups distinguish source reuse from full source reads")
     std::filesystem::remove_all(root);
 }
 
+TEST_CASE("bounded compression workers preserve snapshot ordering and content") {
+    const auto root = std::filesystem::path(CPCP_TEST_TEMP_DIR) / "bounded-jobs-test";
+    std::filesystem::remove_all(root);
+    const auto repository = root / "repo";
+    const auto source = root / "source";
+    std::filesystem::create_directories(source);
+    std::ofstream output(source / "large.bin", std::ios::binary);
+    const std::string block(1024 * 1024, 'x');
+    for (unsigned int index = 0; index < 4; ++index) {
+        output << block;
+    }
+    output.close();
+    cpcp::repository::ConfigOptions config;
+    config.kdf = {8192, 1};
+    config.chunk_size = 1024 * 1024;
+    REQUIRE(cpcp::application::initialize_repository(repository, password(), config));
+    cpcp::application::BackupOptions options;
+    options.jobs = 4;
+    const auto snapshot = cpcp::application::backup_add(repository, password(), {source}, options).value().snapshot;
+    REQUIRE(snapshot.stats.chunk_references == 4);
+    REQUIRE(snapshot.stats.files == 1);
+    REQUIRE(cpcp::application::verify_repository(
+        repository,
+        password(),
+        cpcp::application::VerifyOptions{true, false}
+    ));
+    std::filesystem::remove_all(root);
+}
+
 TEST_CASE("repository statistics distinguish stored and allocated bytes") {
     const auto root = std::filesystem::path(CPCP_TEST_TEMP_DIR) / "repository-stats-test";
     std::filesystem::remove_all(root);

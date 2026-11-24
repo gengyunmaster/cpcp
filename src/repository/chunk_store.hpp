@@ -32,6 +32,11 @@ public:
     );
 
     domain::Result<ChunkMetadata> put(std::span<const std::byte> plaintext);
+    domain::Result<ChunkMetadata> put_encoded(
+        std::span<const std::byte> plaintext,
+        std::span<const std::byte> encoded,
+        std::uint16_t encoding
+    );
     domain::Result<ChunkMetadata> reuse(const crypto::ChunkDescriptor& descriptor);
     domain::Result<bool> has_object(const crypto::Digest& id) const;
     domain::Result<crypto::Bytes> get(const ChunkMetadata& chunk);

@@ -2,6 +2,7 @@
 
 #include "application/inspection_service.hpp"
 #include "crypto/file_identity.hpp"
+#include "domain/compression.hpp"
 #include "platform/cancellation.hpp"
 #include "platform/lock.hpp"
 #include "repository/chunk_set.hpp"
@@ -13,6 +14,7 @@
 #include <charconv>
 #include <chrono>
 #include <filesystem>
+#include <future>
 #include <string>
 #include <system_error>
 
@@ -587,6 +589,7 @@ struct Runtime {
     std::uint64_t chunks_this_invocation = 0;
     std::uint64_t interrupt_after = 0;
     bool interrupt_main = false;
+    std::size_t jobs = 1;
 };
 
 domain::Result<void> checkpoint_interruption(Runtime& runtime) {
@@ -881,24 +884,13 @@ domain::Result<void> capture_file(
             return std::unexpected(positioned.error());
         }
     }
-    while (true) {
-        const auto count = read_chunk(*file, buffer);
-        if (!count) {
-            return std::unexpected(count.error());
-        }
-        if (*count == 0) {
-            break;
-        }
-        const auto chunk = runtime.store.put(std::span(buffer).first(*count));
-        if (!chunk) {
-            return std::unexpected(chunk.error());
-        }
+    const auto process_chunk = [&](const repository::ChunkMetadata& chunk) -> domain::Result<void> {
         const crypto::ChunkDescriptor descriptor{
-            chunk->id,
-            chunk->plaintext_length,
-            chunk->stored_length,
-            chunk->format_version,
-            chunk->content_encoding,
+            chunk.id,
+            chunk.plaintext_length,
+            chunk.stored_length,
+            chunk.format_version,
+            chunk.content_encoding,
         };
         const auto appended = active->identity.append(std::span(&descriptor, 1));
         if (!appended) {
@@ -909,9 +901,9 @@ domain::Result<void> capture_file(
             return added;
         }
         batch.chunks.push_back(descriptor);
-        active->next_offset += *count;
+        active->next_offset += chunk.plaintext_length;
         ++runtime.stats.chunk_references;
-        if (chunk->already_present) {
+        if (chunk.already_present) {
             ++active->deduplicated_chunks;
             ++batch_deduplicated;
         } else {
@@ -937,9 +929,62 @@ domain::Result<void> capture_file(
             batch_new = 0;
             batch_deduplicated = 0;
         }
-        const auto interrupted = checkpoint_interruption(runtime);
-        if (!interrupted) {
-            return std::unexpected(interrupted.error());
+        return checkpoint_interruption(runtime);
+    };
+    while (true) {
+        std::vector<domain::Bytes> inputs;
+        bool eof = false;
+        while (inputs.size() < runtime.jobs) {
+            const auto count = read_chunk(*file, buffer);
+            if (!count) {
+                return std::unexpected(count.error());
+            }
+            if (*count == 0) {
+                eof = true;
+                break;
+            }
+            inputs.emplace_back(buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(*count));
+        }
+        if (inputs.empty()) {
+            break;
+        }
+        if (runtime.jobs == 1) {
+            const auto chunk = runtime.store.put(inputs.front());
+            if (!chunk) {
+                return std::unexpected(chunk.error());
+            }
+            const auto processed = process_chunk(*chunk);
+            if (!processed) {
+                return std::unexpected(processed.error());
+            }
+        } else {
+            std::vector<std::future<domain::Result<domain::Bytes>>> work;
+            work.reserve(inputs.size());
+            for (const auto& input : inputs) {
+                work.push_back(std::async(std::launch::async, [&input] {
+                    return domain::compress_zstd(input);
+                }));
+            }
+            for (std::size_t index = 0; index < inputs.size(); ++index) {
+                auto compressed = work[index].get();
+                if (!compressed) {
+                    return std::unexpected(compressed.error());
+                }
+                const auto& input = inputs[index];
+                const auto chunk = compressed->size() < input.size()
+                    ? runtime.store.put_encoded(input, *compressed, 1)
+                    : runtime.store.put_encoded(input, input, 0);
+                if (!chunk) {
+                    return std::unexpected(chunk.error());
+                }
+                const auto processed = process_chunk(*chunk);
+                if (!processed) {
+                    return std::unexpected(processed.error());
+                }
+            }
+        }
+        if (eof) {
+            break;
         }
     }
 
@@ -1622,7 +1667,8 @@ domain::Result<Runtime> make_runtime(
     bool revalidate_all,
     bool full_source_read,
     std::uint64_t interrupt_after,
-    bool interrupt_main
+    bool interrupt_main,
+    std::size_t jobs
 ) {
     auto unlocked = repository::load_config(repository, password);
     if (!unlocked) {
@@ -1721,6 +1767,7 @@ domain::Result<Runtime> make_runtime(
         0,
         interrupt_after,
         interrupt_main,
+        jobs,
     };
 }
 
@@ -1827,7 +1874,7 @@ domain::Result<BackupReport> backup_add(
     if (!begun) {
         return std::unexpected(begun.error());
     }
-    auto runtime = make_runtime(repository, password, std::move(spec), std::move(parent), std::move(journal).value(), options.revalidate_all, options.full_source_read, options.interrupt_after_chunks_for_testing, options.interrupt_after_main_for_testing);
+    auto runtime = make_runtime(repository, password, std::move(spec), std::move(parent), std::move(journal).value(), options.revalidate_all, options.full_source_read, options.interrupt_after_chunks_for_testing, options.interrupt_after_main_for_testing, options.jobs);
     if (!runtime) {
         return std::unexpected(runtime.error());
     }
@@ -1903,7 +1950,7 @@ domain::Result<BackupReport> backup_resume(
         }
         parent = *found;
     }
-    auto runtime = make_runtime(repository, password, std::move(*spec), std::move(parent), std::move(journal).value(), options.revalidate_all, false, options.interrupt_after_chunks_for_testing, options.interrupt_after_main_for_testing);
+    auto runtime = make_runtime(repository, password, std::move(*spec), std::move(parent), std::move(journal).value(), options.revalidate_all, false, options.interrupt_after_chunks_for_testing, options.interrupt_after_main_for_testing, options.jobs);
     if (!runtime) {
         return std::unexpected(runtime.error());
     }

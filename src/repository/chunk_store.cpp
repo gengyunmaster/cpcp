@@ -7,6 +7,7 @@
 
 #include <sodium.h>
 
+#include <algorithm>
 #include <array>
 #include <filesystem>
 #include <system_error>
@@ -321,7 +322,23 @@ domain::Result<crypto::Bytes> ChunkStore::get(const ChunkMetadata& chunk) {
 }
 
 domain::Result<ChunkMetadata> ChunkStore::put(std::span<const std::byte> plaintext) {
-    if (plaintext.empty() || plaintext.size() > config_.chunk_size) {
+    auto compressed = domain::compress_zstd(plaintext);
+    if (!compressed) {
+        return std::unexpected(compressed.error());
+    }
+    if (compressed->size() < plaintext.size()) {
+        return put_encoded(plaintext, *compressed, 1);
+    }
+    return put_encoded(plaintext, plaintext, 0);
+}
+
+domain::Result<ChunkMetadata> ChunkStore::put_encoded(
+    std::span<const std::byte> plaintext,
+    std::span<const std::byte> encoded,
+    std::uint16_t encoding
+) {
+    if (plaintext.empty() || plaintext.size() > config_.chunk_size
+        || encoding > 1 || (encoding == 0 && !std::ranges::equal(encoded, plaintext))) {
         return std::unexpected(Error{ErrorCode::usage, "chunk plaintext length is invalid"});
     }
     const auto id = crypto::compute_chunk_id(id_key_, plaintext);
@@ -396,15 +413,7 @@ domain::Result<ChunkMetadata> ChunkStore::put(std::span<const std::byte> plainte
         return chunk;
     }
 
-    Bytes encoded(plaintext.begin(), plaintext.end());
-    auto compressed = domain::compress_zstd(plaintext);
-    if (!compressed) {
-        return std::unexpected(compressed.error());
-    }
-    if (compressed->size() < encoded.size()) {
-        encoded = std::move(*compressed);
-        chunk.content_encoding = 1;
-    }
+    chunk.content_encoding = encoding;
     chunk.stored_length = encoded.size() + 64;
     const auto temporary = repository_ / "tmp"
         / (domain::hex_encode(crypto::random_uuid()) + ".part");

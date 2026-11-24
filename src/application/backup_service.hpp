@@ -20,6 +20,7 @@ struct BackupOptions {
     std::vector<std::string> exclude_patterns;
     std::uint64_t interrupt_after_chunks_for_testing = 0;
     bool interrupt_after_main_for_testing = false;
+    std::size_t jobs = 1;
 };
 
 struct BackupReport {
@@ -35,6 +36,7 @@ struct ResumeOptions {
     std::map<std::string, std::filesystem::path> remap_roots;
     std::uint64_t interrupt_after_chunks_for_testing = 0;
     bool interrupt_after_main_for_testing = false;
+    std::size_t jobs = 1;
 };
 
 struct BackupSessionStatus {

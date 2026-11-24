@@ -288,9 +288,21 @@ int run(int argc, char** argv) {
     restore->add_flag("--allow-partial", restore_options.allow_partial, "Allow restoration from a partial snapshot");
     restore->add_flag("--restore-ownership", restore_options.restore_ownership, "Restore recorded POSIX ownership when permitted");
     restore->add_flag("--restore-privileged-bits", restore_options.restore_privileged_bits, "Restore setuid/setgid bits explicitly");
+    restore->add_flag("--sanitize-names", restore_options.sanitize_names, "Escape target names deterministically and write a path map");
+    restore->add_flag("--dry-run", restore_options.dry_run, "Validate the manifest and destination plan without writing");
+    restore->add_option("--name-map", restore_options.name_map, "Override the NDJSON name-map path");
     add_inspection_options(restore);
     restore->callback([&] {
         if (!root_selector.empty()) {
+            if (root_selector.starts_with("label:") && root_selector.size() > 6) {
+                restore_options.root_label = root_selector.substr(6);
+                command_result = run_restore_command(
+                    inspection_options,
+                    restore_selector,
+                    restore_options
+                );
+                return;
+            }
             if (!root_selector.starts_with("index:")) {
                 command_result = report_error(domain::Error{
                     domain::ErrorCode::usage,

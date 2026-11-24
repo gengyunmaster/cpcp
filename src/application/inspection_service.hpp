@@ -43,6 +43,7 @@ struct BrowseOptions {
 struct RestoreOptions {
     std::filesystem::path destination;
     std::optional<std::uint32_t> root;
+    std::optional<std::string> root_label;
     std::optional<std::string> path;
     bool strip_root = false;
     bool overwrite = false;
@@ -53,6 +54,9 @@ struct RestoreOptions {
     bool latest_complete = false;
     bool restore_ownership = false;
     bool restore_privileged_bits = false;
+    bool sanitize_names = false;
+    bool dry_run = false;
+    std::filesystem::path name_map;
 };
 
 struct RestoreReport {

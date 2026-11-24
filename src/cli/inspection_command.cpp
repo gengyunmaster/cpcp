@@ -229,10 +229,16 @@ int run_restore_command(
             {"symlinks", std::to_string(report->symlinks)},
             {"metadata_warnings", std::to_string(report->metadata_warnings)},
             {"destination", restore.destination.string()},
-            {"verification_scope", "full-manifest-and-selected-chunks"},
+            {"name_map", restore.sanitize_names && !restore.dry_run
+                ? nlohmann::json((restore.name_map.empty() ? restore.destination / "cpcp-name-map.ndjson" : restore.name_map).string())
+                : nlohmann::json(nullptr)},
+            {"verification_scope", restore.dry_run
+                ? "full-manifest-and-destination-plan"
+                : "full-manifest-and-selected-chunks"},
         }.dump(2) << '\n';
     } else {
-        std::cout << "Restored " << report->files << " files from snapshot "
+        std::cout << (restore.dry_run ? "Planned restoration of " : "Restored ")
+                  << report->files << " files from snapshot "
                   << report->snapshot_generation << " (" << report->snapshot_status
                   << ") to " << restore.destination << '\n';
     }

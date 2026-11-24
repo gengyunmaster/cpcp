@@ -155,15 +155,13 @@ TEST_CASE("damaged summary is independently rebuilt from main") {
     REQUIRE(repaired.context.lineage_uuid == fixture.snapshot.context.lineage_uuid);
     const auto unlocked = cpcp::repository::load_config(fixture.repository, password()).value();
     REQUIRE(cpcp::repository::list_snapshots(fixture.repository, unlocked.config, unlocked.master_key));
+    cpcp::application::RestoreOptions restore;
+    restore.destination = fixture.directory.path() / "restored";
     const auto restored = cpcp::application::restore_snapshot(
         fixture.repository,
         password(),
         repaired.context.generation,
-        cpcp::application::RestoreOptions{
-            .destination = fixture.directory.path() / "restored",
-            .root = std::nullopt,
-            .path = std::nullopt,
-        }
+        restore
     ).value();
     REQUIRE(restored.files == 1);
 }

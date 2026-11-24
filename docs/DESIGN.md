@@ -772,7 +772,9 @@ The default is to refuse overwriting existing paths. `--overwrite` requires conf
 
 Restoration must constrain every output to the selected destination, reject traversal and absolute paths, and avoid following attacker-controlled symbolic links during path creation. Handle-relative traversal or an equivalent platform mechanism is preferred over repeated path-string checks.
 
-Invalid target names, reserved Windows names, and case collisions fail explicitly by default. An opt-in `--sanitize-names` mode may deterministically escape or rename affected components so that content remains recoverable cross-platform. It must write a machine-readable original-to-restored path map, avoid collisions and overwrites, and report that original names were not preserved. Silent lossy renaming is prohibited.
+Invalid target names, reserved Windows names, and case collisions fail explicitly by default. An opt-in `--sanitize-names` mode deterministically escapes affected components with uppercase `%HH` bytes, including `%`, Windows separators/control characters, reserved device names, and trailing dots or spaces. It writes `cpcp-name-map.ndjson` (or `--name-map`) with schema `cpcp.restore-name-map.v1`, original root/path, and the actual destination-relative path. Every restored component receives collision detection; case folding is applied to mapped names for the cross-platform sanitization plan. Silent lossy renaming is prohibited.
+
+Restore `--dry-run` validates the complete selected manifest and destination mapping, including collisions, without creating the destination, temporary files, name maps, or changing metadata. Its report scope is `full-manifest-and-destination-plan`; it does not claim deep validation of every referenced chunk.
 
 Directory metadata is applied after child entries where necessary. A partial restore or unsupported metadata is reported clearly; a whole directory-tree restore is not claimed to be atomic.
 

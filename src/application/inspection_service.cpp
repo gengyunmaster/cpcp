@@ -8,9 +8,11 @@
 
 #include <array>
 #include <chrono>
+#include <cctype>
 #include <filesystem>
 #include <optional>
 #include <ranges>
+#include <set>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -273,12 +275,53 @@ domain::Result<std::uint64_t> verify_snapshot(
     return chunk_count;
 }
 
+std::string sanitize_component(const std::string& component) {
+    const auto reserved = [](std::string_view value) {
+        const auto dot = value.find('.');
+        auto base = std::string(value.substr(0, dot));
+        std::ranges::transform(base, base.begin(), [](unsigned char character) {
+            return static_cast<char>(std::toupper(character));
+        });
+        return base == "CON" || base == "PRN" || base == "AUX" || base == "NUL"
+            || (base.size() == 4 && base.starts_with("COM") && base[3] >= '1' && base[3] <= '9')
+            || (base.size() == 4 && base.starts_with("LPT") && base[3] >= '1' && base[3] <= '9');
+    };
+    std::string output;
+    for (std::size_t index = 0; index < component.size(); ++index) {
+        const auto value = static_cast<unsigned char>(component[index]);
+        const bool trailing = index + 1 == component.size()
+            && (value == '.' || value == ' ');
+        if (value == '%' || value < 32 || trailing
+            || std::string_view("<>:\"/\\|?*").find(static_cast<char>(value)) != std::string_view::npos
+            || (index == 0 && reserved(component))) {
+            constexpr char digits[] = "0123456789ABCDEF";
+            output.push_back('%');
+            output.push_back(digits[value >> 4U]);
+            output.push_back(digits[value & 15U]);
+        } else {
+            output.push_back(static_cast<char>(value));
+        }
+    }
+    return output.empty() ? "%00" : output;
+}
+
+std::string collision_key(std::string_view value, bool fold_case) {
+    std::string key(value);
+    if (fold_case) {
+        std::ranges::transform(key, key.begin(), [](unsigned char character) {
+            return static_cast<char>(std::tolower(character));
+        });
+    }
+    return key;
+}
+
 std::filesystem::path output_path(
     const std::filesystem::path& destination,
     const repository::SnapshotSummary& summary,
     std::uint32_t root,
     const std::string& relative,
-    bool strip_root
+    bool strip_root,
+    bool sanitize
 ) {
     const auto root_info = std::ranges::find_if(summary.roots, [&](const repository::RootInfo& candidate) {
         return candidate.index == root;
@@ -286,15 +329,23 @@ std::filesystem::path output_path(
     if (root_info == summary.roots.end()) {
         throw std::invalid_argument("snapshot root does not exist");
     }
-    if (!safe_label(root_info->label) || !safe_relative(relative, true)) {
+    const auto& label = root_info->label;
+    if (label.empty() || label == "." || label == ".." || label.find('/') != std::string::npos
+        || !safe_relative(relative, true)) {
         throw std::invalid_argument("unsafe restore path");
     }
     auto output = destination;
     if (!strip_root) {
-        output /= root_info->label;
+        output /= sanitize ? std::filesystem::path(sanitize_component(label)) : std::filesystem::path(label);
     }
     if (!relative.empty() && relative != ".") {
-        output /= std::filesystem::path(relative);
+        if (sanitize) {
+            for (const auto& component : std::filesystem::path(relative)) {
+                output /= sanitize_component(component.string());
+            }
+        } else {
+            output /= std::filesystem::path(relative);
+        }
     }
     return output;
 }
@@ -478,6 +529,7 @@ domain::Result<RestoreReport> restore_snapshot(
     std::optional<std::uint64_t> generation,
     const RestoreOptions& options
 ) {
+    try {
     if (options.destination.empty()) {
         return std::unexpected(Error{ErrorCode::usage, "restore destination is required"});
     }
@@ -506,6 +558,9 @@ domain::Result<RestoreReport> restore_snapshot(
     if (summary->status == "partial" && !options.allow_partial) {
         return std::unexpected(Error{ErrorCode::usage, "restoring a partial snapshot requires --allow-partial"});
     }
+    if (options.root && options.root_label) {
+        return std::unexpected(Error{ErrorCode::usage, "root index and label are mutually exclusive"});
+    }
     if (options.path && !safe_relative(*options.path, false)) {
         return std::unexpected(Error{ErrorCode::usage, "restore path must remain relative to its root"});
     }
@@ -516,6 +571,11 @@ domain::Result<RestoreReport> restore_snapshot(
         return root.index == *options.root;
     })) {
         return std::unexpected(Error{ErrorCode::usage, "requested root does not exist"});
+    }
+    if (options.root_label && !std::ranges::any_of(summary->roots, [&](const repository::RootInfo& root) {
+        return root.label == *options.root_label;
+    })) {
+        return std::unexpected(Error{ErrorCode::usage, "requested root label does not exist"});
     }
 
     auto store = repository::ChunkStore::create(repository, unlocked->config, unlocked->master_key);
@@ -528,7 +588,9 @@ domain::Result<RestoreReport> restore_snapshot(
     }
 
     std::error_code filesystem_error;
-    std::filesystem::create_directories(options.destination, filesystem_error);
+    if (!options.dry_run) {
+        std::filesystem::create_directories(options.destination, filesystem_error);
+    }
     if (filesystem_error) {
         return std::unexpected(Error{ErrorCode::permanent_io, filesystem_error.message()});
     }
@@ -546,9 +608,67 @@ domain::Result<RestoreReport> restore_snapshot(
     std::filesystem::path temporary;
     std::vector<std::pair<DirectoryInfo, std::filesystem::path>> directories;
     std::uint64_t expected_batch = 0;
+    std::set<std::string> destination_names;
+    std::optional<platform::BinaryFile> name_map;
+    std::filesystem::path name_map_path = options.name_map.empty()
+        ? options.destination / "cpcp-name-map.ndjson"
+        : options.name_map;
+    if (options.sanitize_names && !options.dry_run) {
+        std::filesystem::create_directories(name_map_path.parent_path(), filesystem_error);
+        if (filesystem_error) {
+            return std::unexpected(Error{ErrorCode::permanent_io, filesystem_error.message()});
+        }
+        auto created = platform::BinaryFile::create_new(name_map_path);
+        if (!created) {
+            return std::unexpected(created.error());
+        }
+        name_map.emplace(std::move(created).value());
+    }
+    const auto mapped_path = [&](std::uint32_t root, const std::string& relative) {
+        auto output = output_path(
+            options.destination,
+            *summary,
+            root,
+            relative,
+            options.strip_root,
+            options.sanitize_names
+        );
+        const auto native = output.lexically_relative(options.destination).generic_string();
+        const auto key = collision_key(native, options.sanitize_names);
+        if (!destination_names.insert(key).second) {
+            throw std::invalid_argument("restore destination path collision: " + native);
+        }
+        return output;
+    };
+    const auto record_mapping = [&](std::uint32_t root, const std::string& original, const std::filesystem::path& restored) -> domain::Result<void> {
+        if (!name_map) {
+            return {};
+        }
+        const auto root_info = std::ranges::find_if(summary->roots, [&](const repository::RootInfo& candidate) {
+            return candidate.index == root;
+        });
+        const auto document = nlohmann::json{
+            {"schema", "cpcp.restore-name-map.v1"},
+            {"root", root},
+            {"original_root_label", root_info == summary->roots.end() ? "" : root_info->label},
+            {"original_path", original},
+            {"restored_path", restored.lexically_relative(options.destination).generic_string()},
+        };
+        const auto text = document.dump() + "\n";
+        return name_map->write_all(std::as_bytes(std::span(text)));
+    };
 
     const auto selected_root = [&](std::uint32_t root) {
-        return !options.root || *options.root == root;
+        if (options.root && *options.root != root) {
+            return false;
+        }
+        if (options.root_label) {
+            const auto selected = std::ranges::find_if(summary->roots, [&](const repository::RootInfo& candidate) {
+                return candidate.index == root;
+            });
+            return selected != summary->roots.end() && selected->label == *options.root_label;
+        }
+        return true;
     };
     const auto selected_file = [&](const FileInfo& file) {
         return selected_root(file.root) && (!options.path || *options.path == file.path);
@@ -608,18 +728,20 @@ domain::Result<RestoreReport> restore_snapshot(
                 if (!popped) {
                     return std::unexpected(popped.error());
                 }
-                auto path = output_path(
-                    options.destination,
-                    *summary,
-                    directory->root,
-                    directory->path,
-                    options.strip_root
-                );
+                auto path = mapped_path(directory->root, directory->path);
+                if (options.dry_run) {
+                    ++report.directories;
+                    break;
+                }
                 std::filesystem::create_directories(path, filesystem_error);
                 if (filesystem_error) {
                     return std::unexpected(Error{ErrorCode::permanent_io, filesystem_error.message()});
                 }
-                directories.emplace_back(*directory, std::move(path));
+                directories.emplace_back(*directory, path);
+                const auto mapped = record_mapping(directory->root, directory->path, path);
+                if (!mapped) {
+                    return std::unexpected(mapped.error());
+                }
             }
             break;
         }
@@ -631,6 +753,11 @@ domain::Result<RestoreReport> restore_snapshot(
             current = *header;
             expected_batch = 0;
             if (!selected_file(*header)) {
+                break;
+            }
+            if (options.dry_run) {
+                static_cast<void>(mapped_path(current->root, current->path));
+                ++report.files;
                 break;
             }
             temporary = options.destination / "tmp"
@@ -711,13 +838,7 @@ domain::Result<RestoreReport> restore_snapshot(
                     return std::unexpected(result.error());
                 }
                 output.reset();
-                const auto final = output_path(
-                    options.destination,
-                    *summary,
-                    current->root,
-                    current->path,
-                    options.strip_root
-                );
+                const auto final = mapped_path(current->root, current->path);
                 std::filesystem::create_directories(final.parent_path(), filesystem_error);
                 if (filesystem_error) {
                     return std::unexpected(Error{ErrorCode::permanent_io, filesystem_error.message()});
@@ -746,6 +867,10 @@ domain::Result<RestoreReport> restore_snapshot(
                 if (!result) {
                     return std::unexpected(result.error());
                 }
+                const auto mapped = record_mapping(current->root, current->path, final);
+                if (!mapped) {
+                    return std::unexpected(mapped.error());
+                }
                 ++report.files;
             }
             current.reset();
@@ -762,13 +887,11 @@ domain::Result<RestoreReport> restore_snapshot(
             if (!selected_root(link->root) || (options.path && *options.path != link->path)) {
                 break;
             }
-            const auto final = output_path(
-                options.destination,
-                *summary,
-                link->root,
-                link->path,
-                options.strip_root
-            );
+            const auto final = mapped_path(link->root, link->path);
+            if (options.dry_run) {
+                ++report.symlinks;
+                break;
+            }
             std::filesystem::create_directories(final.parent_path(), filesystem_error);
             if (filesystem_error) {
                 return std::unexpected(Error{ErrorCode::permanent_io, filesystem_error.message()});
@@ -808,6 +931,10 @@ domain::Result<RestoreReport> restore_snapshot(
             if (!synced) {
                 return std::unexpected(synced.error());
             }
+            const auto mapped = record_mapping(link->root, link->path, final);
+            if (!mapped) {
+                return std::unexpected(mapped.error());
+            }
             ++report.symlinks;
             break;
         }
@@ -817,7 +944,7 @@ domain::Result<RestoreReport> restore_snapshot(
                 return std::unexpected(ownership.error());
             }
             if (!options.restore_ownership || !selected_root(ownership->root)
-                || (options.path && *options.path != ownership->path)) {
+                || (options.path && *options.path != ownership->path) || options.dry_run) {
                 break;
             }
             const auto path = output_path(
@@ -825,7 +952,8 @@ domain::Result<RestoreReport> restore_snapshot(
                 *summary,
                 ownership->root,
                 ownership->path,
-                options.strip_root
+                options.strip_root,
+                options.sanitize_names
             );
             const auto changed = platform::set_ownership(path, ownership->uid, ownership->gid);
             if (!changed) {
@@ -869,7 +997,21 @@ domain::Result<RestoreReport> restore_snapshot(
     if (options.path && report.files == 0 && report.symlinks == 0) {
         return std::unexpected(Error{ErrorCode::permanent_io, "requested restore path was not found"});
     }
+    if (name_map) {
+        const auto flushed = name_map->flush();
+        if (!flushed) {
+            return std::unexpected(flushed.error());
+        }
+        const auto closed = name_map->close();
+        if (!closed) {
+            return std::unexpected(closed.error());
+        }
+        name_map.reset();
+    }
     return report;
+    } catch (const std::exception& error) {
+        return std::unexpected(Error{ErrorCode::conflict, error.what()});
+    }
 }
 
 domain::Result<VerifyReport> verify_repository(

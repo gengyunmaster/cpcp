@@ -192,6 +192,7 @@ if(BUILD_TESTING)
         tests/integration/lifecycle_service_test.cpp
         tests/integration/metadata_test.cpp
         tests/integration/resume_service_test.cpp
+        tests/integration/sanitize_restore_test.cpp
         tests/integration/symlink_test.cpp
         tests/integration/validation_cache_test.cpp
     )

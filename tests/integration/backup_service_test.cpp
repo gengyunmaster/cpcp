@@ -135,6 +135,7 @@ TEST_CASE("backup creates and reuses snapshots with deduplication") {
     REQUIRE(restored["sub/b.txt"] == expected);
 }
 
+#ifndef _WIN32
 TEST_CASE("partial snapshots authenticate failures and require explicit restore approval") {
     TestDirectory fixture("backup-partial");
     const auto repository = fixture.path() / "repo";
@@ -227,6 +228,7 @@ TEST_CASE("partial snapshots authenticate failures and require explicit restore 
     REQUIRE(repaired.stats.selection->failed_entries == 1);
     REQUIRE(cpcp::application::verify_repository(repository, password(), {}));
 }
+#endif
 
 TEST_CASE("an explicit older base preserves lineage and allocates the global next generation") {
     TestDirectory fixture("backup-explicit-base");

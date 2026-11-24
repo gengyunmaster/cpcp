@@ -17,6 +17,7 @@ struct BackupOptions {
     std::optional<std::uint64_t> base_generation;
     bool allow_partial = false;
     bool unsupported_fail = false;
+    bool dry_run = false;
     std::vector<std::string> exclude_patterns;
     std::uint64_t interrupt_after_chunks_for_testing = 0;
     bool interrupt_after_main_for_testing = false;

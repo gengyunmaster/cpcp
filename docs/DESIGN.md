@@ -609,6 +609,8 @@ Every new snapshot receives one generation above the highest valid active genera
 
 Pre- and post-read metadata comparisons improve detection but do not make a changing file inherently consistent. For important active data, users should quiesce the application or use an operating-system snapshot. cpcp must not describe such backups as application-consistent.
 
+`backup add --dry-run` reads selected sources and may validate existing objects under the requested policy, but uses read-only planning for absent chunks and never creates chunks, journals, sessions, or snapshots. Its schema is `cpcp.backup-plan.v1` and its scope is `source-read-and-existing-object-checks`; it does not claim that publication was tested.
+
 Snapshot finalization is idempotent within a session. The session records its snapshot UUID and generation before main-stream creation. On resume after a crash before main publication, finalization repeats with a fresh temporary file and no-replace publication. If the expected main object is already present, cpcp fully verifies it against the session spool and recomputes its ciphertext digest instead of treating the name collision as a generic error. It then publishes the matching summary once.
 
 If the summary is already present, cpcp authenticates it, verifies that it binds the same session, UUID, generation, and main digest, and treats the backup as already committed without creating another snapshot. A mismatched main or summary is never overwritten; it requires explicit quarantine or a fresh snapshot UUID. Session completion records and journal deletion occur only after this committed-or-unpublished outcome is unambiguous.

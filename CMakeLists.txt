@@ -186,6 +186,7 @@ if(BUILD_TESTING)
         tests/integration/browse_service_test.cpp
         tests/integration/check_service_test.cpp
         tests/integration/diff_service_test.cpp
+        tests/integration/dry_run_test.cpp
         tests/integration/exclusion_test.cpp
         tests/integration/incremental_backup_test.cpp
         tests/integration/key_service_test.cpp

@@ -70,7 +70,7 @@ int run_backup_add_command(
     const auto& snapshot = report->snapshot;
     if (options.config.json) {
         std::cout << nlohmann::json{
-            {"schema", "cpcp.backup-add.v1"},
+            {"schema", snapshot.status == "dry-run" ? "cpcp.backup-plan.v1" : "cpcp.backup-add.v1"},
             {"generation", std::to_string(snapshot.context.generation)},
             {"snapshot_uuid", domain::hex_encode(snapshot.context.snapshot_uuid)},
             {"lineage_uuid", domain::hex_encode(snapshot.context.lineage_uuid)},
@@ -88,11 +88,19 @@ int run_backup_add_command(
             {"failed_entries", std::to_string(snapshot.stats.selection
                 ? snapshot.stats.selection->failed_entries
                 : 0)},
+            {"verification_scope", snapshot.status == "dry-run"
+                ? "source-read-and-existing-object-checks"
+                : "authenticated-publication"},
         }.dump(2) << '\n';
     } else {
-        std::cout << "Published snapshot " << snapshot.context.generation
-                  << " with " << snapshot.stats.files << " files and "
-                  << snapshot.stats.new_chunks << " new chunks\n";
+        if (snapshot.status == "dry-run") {
+            std::cout << "Dry-run: " << snapshot.stats.files << " files, "
+                      << snapshot.stats.new_chunks << " new chunks; no repository writes\n";
+        } else {
+            std::cout << "Published snapshot " << snapshot.context.generation
+                      << " with " << snapshot.stats.files << " files and "
+                      << snapshot.stats.new_chunks << " new chunks\n";
+        }
     }
     return snapshot.status == "partial" ? 3 : 0;
 }

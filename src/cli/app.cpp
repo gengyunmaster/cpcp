@@ -101,6 +101,7 @@ int run(int argc, char** argv) {
     add->add_flag("--no-parent", backup_options.no_parent, "Start a new snapshot lineage");
     add->add_option("--base", backup_options.base_generation, "Use an explicit base snapshot generation");
     add->add_flag("--allow-partial", backup_options.allow_partial, "Publish a partial snapshot when required entries fail");
+    add->add_flag("--dry-run", backup_options.dry_run, "Read sources and plan changes without repository writes");
     add->add_option("--unsupported", unsupported_policy, "Policy for unsupported entries: skip or fail")
         ->default_val(unsupported_policy)
         ->check(CLI::IsMember({"skip", "fail"}));

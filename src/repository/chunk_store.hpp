@@ -44,6 +44,7 @@ public:
     domain::Result<void> validate(const ChunkMetadata& chunk);
     void allow_base_evidence(const crypto::Digest& chunk_id);
     void set_revalidate_all(bool enabled);
+    void set_read_only_planning(bool enabled);
     std::vector<ValidatedObject> validated_objects() const;
 
 private:
@@ -78,6 +79,7 @@ private:
     std::map<std::string, bool> base_evidence_;
     std::optional<ValidationCache> validation_cache_;
     bool revalidate_all_ = false;
+    bool read_only_planning_ = false;
 };
 
 }

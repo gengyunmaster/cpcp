@@ -118,6 +118,10 @@ void ChunkStore::set_revalidate_all(bool enabled) {
     revalidate_all_ = enabled;
 }
 
+void ChunkStore::set_read_only_planning(bool enabled) {
+    read_only_planning_ = enabled;
+}
+
 bool ChunkStore::historical_evidence(const ChunkMetadata& chunk) {
     const auto key = crypto::to_hex(chunk.id);
     if (base_evidence_.contains(key)) {
@@ -415,6 +419,9 @@ domain::Result<ChunkMetadata> ChunkStore::put_encoded(
 
     chunk.content_encoding = encoding;
     chunk.stored_length = encoded.size() + 64;
+    if (read_only_planning_) {
+        return chunk;
+    }
     const auto temporary = repository_ / "tmp"
         / (domain::hex_encode(crypto::random_uuid()) + ".part");
     std::error_code directory_error;

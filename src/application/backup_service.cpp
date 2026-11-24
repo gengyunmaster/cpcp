@@ -1827,6 +1827,145 @@ domain::Result<BackupReport> execute(Runtime runtime, bool resumed) {
     return BackupReport{std::move(*summary), runtime.skipped, runtime.spec.context.session_uuid, resumed};
 }
 
+domain::Result<BackupReport> plan_backup(
+    const std::filesystem::path& repository,
+    const crypto::SecretBytes& password,
+    const std::vector<std::filesystem::path>& roots,
+    const BackupOptions& options
+) {
+    const auto unlocked = repository::load_config(repository, password);
+    if (!unlocked) {
+        return std::unexpected(unlocked.error());
+    }
+    const auto locks = platform::RepositoryLocks::read(repository);
+    if (!locks) {
+        return std::unexpected(locks.error());
+    }
+    auto store = repository::ChunkStore::create(repository, unlocked->config, unlocked->master_key);
+    if (!store) {
+        return std::unexpected(store.error());
+    }
+    store->set_read_only_planning(true);
+    store->set_revalidate_all(options.revalidate_all);
+    repository::SnapshotSummary summary;
+    summary.context.repository_uuid = unlocked->config.repository_uuid;
+    summary.context.storage_epoch = unlocked->config.storage_epoch;
+    summary.status = "dry-run";
+    summary.selection_policy = repository::SelectionPolicy{
+        options.unsupported_fail ? "fail" : "skip",
+        !options.cross_file_systems,
+        options.exclude_patterns,
+        true,
+    };
+    std::uint64_t skipped = 0;
+    std::uint64_t failed = 0;
+    const auto canonical_repository = std::filesystem::weakly_canonical(repository);
+    for (const auto& input : roots) {
+        const auto root = std::filesystem::weakly_canonical(input);
+        if (!std::filesystem::is_directory(root)) {
+            return std::unexpected(Error{ErrorCode::usage, "source root is not a directory"});
+        }
+        const auto root_device = path_device(root);
+        std::filesystem::recursive_directory_iterator iterator(root);
+        const auto end = std::filesystem::recursive_directory_iterator();
+        while (iterator != end) {
+            const auto entry = *iterator;
+            std::error_code error;
+            const auto status = entry.symlink_status(error);
+            if (error) {
+                return std::unexpected(Error{ErrorCode::permanent_io, error.message()});
+            }
+            const auto relative = relative_path(root, entry.path());
+            const auto excluded = exclusion_reason(summary.selection_policy, relative);
+            const auto advance = [&]() -> domain::Result<void> {
+                iterator.increment(error);
+                if (error) {
+                    return std::unexpected(Error{ErrorCode::permanent_io, error.message()});
+                }
+                return {};
+            };
+            if (excluded) {
+                ++skipped;
+                if (std::filesystem::is_directory(status)) {
+                    iterator.disable_recursion_pending();
+                }
+                const auto advanced = advance();
+                if (!advanced) {
+                    return std::unexpected(advanced.error());
+                }
+                continue;
+            }
+            if (std::filesystem::is_directory(status)) {
+                if (path_prefix(canonical_repository, entry.path())) {
+                    iterator.disable_recursion_pending();
+                } else {
+                    ++summary.stats.directories;
+                }
+            } else if (std::filesystem::is_symlink(status)) {
+                ++summary.stats.symlinks;
+            } else if (!std::filesystem::is_regular_file(status)) {
+                if (options.unsupported_fail) {
+                    ++failed;
+                } else {
+                    ++skipped;
+                }
+            } else {
+                auto file = platform::BinaryFile::open_read(entry.path());
+                if (!file) {
+                    return std::unexpected(file.error());
+                }
+                const auto before = file->metadata();
+                if (!before) {
+                    return std::unexpected(before.error());
+                }
+                if (!options.cross_file_systems && before->device != root_device) {
+                    ++skipped;
+                    const auto advanced = advance();
+                    if (!advanced) {
+                        return std::unexpected(advanced.error());
+                    }
+                    continue;
+                }
+                std::vector<std::byte> buffer(unlocked->config.chunk_size);
+                while (true) {
+                    const auto count = read_chunk(*file, buffer);
+                    if (!count) {
+                        return std::unexpected(count.error());
+                    }
+                    if (*count == 0) {
+                        break;
+                    }
+                    const auto chunk = store->put(std::span(buffer).first(*count));
+                    if (!chunk) {
+                        return std::unexpected(chunk.error());
+                    }
+                    ++summary.stats.chunk_references;
+                    if (chunk->already_present) {
+                        ++summary.stats.deduplicated_chunks;
+                    } else {
+                        ++summary.stats.new_chunks;
+                    }
+                }
+                const auto after = file->metadata();
+                if (!after || !same_identity(*before, *after)) {
+                    return std::unexpected(Error{ErrorCode::source_changed, "source file changed during dry-run: " + relative});
+                }
+                ++summary.stats.files;
+                summary.stats.logical_bytes += before->size;
+            }
+            const auto advanced = advance();
+            if (!advanced) {
+                return std::unexpected(advanced.error());
+            }
+        }
+    }
+    if (failed != 0) {
+        return std::unexpected(Error{ErrorCode::source_changed, std::to_string(failed) + " required entries failed during dry-run"});
+    }
+    summary.stats.selection = repository::SelectionStats{skipped, failed};
+    return BackupReport{std::move(summary), skipped, {}, false};
+}
+
 domain::Result<Runtime> make_runtime(
     const std::filesystem::path& repository,
     const crypto::SecretBytes& password,
@@ -1964,6 +2103,9 @@ domain::Result<BackupReport> backup_add(
     }
     if (options.no_parent && options.base_generation) {
         return std::unexpected(Error{ErrorCode::usage, "--base and --no-parent are mutually exclusive"});
+    }
+    if (options.dry_run) {
+        return plan_backup(repository, password, roots, options);
     }
     auto unlocked = repository::load_config(repository, password);
     if (!unlocked) {

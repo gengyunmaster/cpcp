@@ -1,6 +1,6 @@
 # cpcp Design and Architecture
 
-> **Status:** Accepted design baseline
+> **Status:** Accepted design baseline; M0–M3 implementation complete, subject to the verification records referenced below
 >
 > **License:** MIT
 >
@@ -1415,7 +1415,7 @@ Before validation-cache v1: specify encoding, authentication, expiration, concur
 
 Before retention and GC: specify snapshot lineage after pruning, quarantine retention and purge, incomplete-session references, and packed-object reachability.
 
-Before packed objects: specify authenticated indexes, chunk locators, publication, compaction, crash recovery, and migration from direct objects.
+Before packed objects: specify authenticated indexes, chunk locators, publication, compaction, crash recovery, and migration from direct objects. No representative small-object benchmark has yet justified adding that second storage format, so the current M3 implementation deliberately retains direct objects and does not claim pack support.
 
 These questions must be resolved through explicit specifications and tests, not left as accidental consequences of implementation details.
 

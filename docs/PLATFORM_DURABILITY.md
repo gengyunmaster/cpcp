@@ -115,3 +115,12 @@ Until one approach passes those tests, cpcp must not claim strong hostile-destin
 - Document forced power-loss methodology and results separately from automated tests.
 - Implement and test configuration replacement, lock scopes, cancellation, and read-only media behavior.
 - Treat untested configurations as unverified rather than assigning them Linux ext4's result.
+
+## 8. M2–M3 verification record
+
+- The completed M2 push passed all eight GitHub Actions jobs: Ubuntu, Windows MinGW, and macOS Debug/Release, plus ASan/UBSan and TSan.
+- The M3 local Release suite passed 99/99 tests, including independent Python recovery, multi-slot configuration, compression, retention, metadata, and restore-planning tests.
+- A real sparse file larger than 4 GiB passed backup, deep verification, and restoration with 64 MiB chunks.
+- The synthetic manifest test authenticated more than 2 GiB of logical JSON while CPZ1 reduced its physical size substantially; the assertion measures logical and stored sizes separately.
+- Local TSan execution remains unreliable in this environment because test discovery terminates with `unexpected memory mapping`. This is not marked as a native TSan pass; GitHub's TSan job remains the authoritative runtime check.
+- Native Windows repository mutation still depends on the explicitly documented directory-durability limitation. Cross-platform CI results do not turn unmeasured power-loss behavior into a durability guarantee.

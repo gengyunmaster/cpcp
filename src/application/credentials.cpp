@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cerrno>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <span>
@@ -163,6 +164,9 @@ domain::Result<crypto::SecretBytes> read_password(
     bool allow_prompt,
     std::optional<int> password_fd
 ) {
+    if (std::getenv("CI") != nullptr) {
+        allow_prompt = false;
+    }
     if (password_file && password_fd) {
         return std::unexpected(Error{ErrorCode::usage, "--password-file and --password-fd are mutually exclusive"});
     }

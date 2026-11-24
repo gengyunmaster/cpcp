@@ -80,6 +80,7 @@ TEST_CASE("multi-gigabyte snapshot manifests stream with bounded memory") {
     }
 
     std::uint64_t batches = 0;
+    std::uint64_t logical_bytes = 0;
     cpcp::storage::SessionSpoolReader reader;
     REQUIRE(reader.open(path, key, spool, cpcp::crypto::StreamDomain::snapshot));
     while (true) {
@@ -89,11 +90,13 @@ TEST_CASE("multi-gigabyte snapshot manifests stream with bounded memory") {
         }
         if (record->type == RecordType::chunk_batch) {
             ++batches;
+            logical_bytes += record->plaintext.size();
         }
     }
 
     REQUIRE(batches == (descriptor_count + batch_size - 1) / batch_size);
-    REQUIRE(reader.stored_length() > 2ULL * 1024ULL * 1024ULL * 1024ULL);
+    REQUIRE(logical_bytes > 2ULL * 1024ULL * 1024ULL * 1024ULL);
+    REQUIRE(reader.stored_length() < logical_bytes / 4);
     REQUIRE(reader.finish());
     REQUIRE(reader.ciphertext_digest().has_value());
     std::filesystem::remove_all(directory);
